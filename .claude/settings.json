@@ -1,0 +1,13 @@
+{
+  "extraKnownMarketplaces": {
+    "jen-marketplace": {
+      "source": {
+        "source": "github",
+        "repo": "youki0p0/jen-marketplace"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "jen@jen-marketplace": true
+  }
+}
