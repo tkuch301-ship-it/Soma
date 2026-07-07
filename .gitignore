@@ -26,3 +26,6 @@ data/
 
 # Misc
 .DS_Store
+
+# TS build info
+tsconfig.tsbuildinfo
