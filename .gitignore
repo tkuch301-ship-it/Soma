@@ -4,3 +4,25 @@
 # Claude Code runtime (subagent worktrees, local settings)
 .claude/worktrees/
 .claude/settings.local.json
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Next.js
+.next/
+out/
+next-env.d.ts
+
+# SQLite data
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Env
+.env*.local
+
+# Misc
+.DS_Store
