@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { updateTask, deleteTask } from "@/lib/repo";
+import { updateStep, deleteStep } from "@/lib/repo";
 import { handleApiError } from "@/lib/apiError";
 import { ValidationError } from "@/lib/errors";
 
@@ -20,11 +20,11 @@ export async function PATCH(
   try {
     const { id } = await context.params;
     const body = await req.json().catch(() => ({}));
-    const task = await updateTask(parseId(id), body ?? {}, {
+    const step = await updateStep(parseId(id), body ?? {}, {
       actor_id: body?.actor_id,
       actor_name: body?.actor_name,
     });
-    return NextResponse.json(task);
+    return NextResponse.json(step);
   } catch (err) {
     return handleApiError(err);
   }
@@ -37,7 +37,7 @@ export async function DELETE(
   try {
     const { id } = await context.params;
     const body = await req.json().catch(() => ({}));
-    await deleteTask(parseId(id), {
+    await deleteStep(parseId(id), {
       actor_id: body?.actor_id,
       actor_name: body?.actor_name,
     });

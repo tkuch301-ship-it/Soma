@@ -8,11 +8,11 @@ import EmptyState from "@/components/EmptyState";
 interface BoardProps {
   tasks: TaskWithAssignee[];
   onStatusChange: (id: number, status: TaskStatus) => void;
-  onEdit: (task: TaskWithAssignee) => void;
+  onOpenDetail: (task: TaskWithAssignee) => void;
   onDelete: (task: TaskWithAssignee) => void;
 }
 
-export default function Board({ tasks, onStatusChange, onEdit, onDelete }: BoardProps) {
+export default function Board({ tasks, onStatusChange, onOpenDetail, onDelete }: BoardProps) {
   if (tasks.length === 0) {
     return (
       <EmptyState
@@ -47,7 +47,7 @@ export default function Board({ tasks, onStatusChange, onEdit, onDelete }: Board
                     key={task.id}
                     task={task}
                     onStatusChange={onStatusChange}
-                    onEdit={onEdit}
+                    onOpenDetail={onOpenDetail}
                     onDelete={onDelete}
                   />
                 ))}

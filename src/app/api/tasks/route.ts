@@ -10,10 +10,19 @@ const STATUSES: TaskStatus[] = ["todo", "doing", "done"];
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
+    const projectIdRaw = searchParams.get("projectId");
     const assigneeIdRaw = searchParams.get("assigneeId");
     const statusRaw = searchParams.get("status");
 
-    const filter: { assigneeId?: number; status?: TaskStatus } = {};
+    const filter: { projectId?: number; assigneeId?: number; status?: TaskStatus } = {};
+
+    if (projectIdRaw !== null) {
+      const projectId = Number(projectIdRaw);
+      if (!Number.isInteger(projectId) || projectId <= 0) {
+        throw new ValidationError("projectId must be a positive integer");
+      }
+      filter.projectId = projectId;
+    }
 
     if (assigneeIdRaw !== null) {
       const assigneeId = Number(assigneeIdRaw);
@@ -30,7 +39,7 @@ export async function GET(req: NextRequest) {
       filter.status = statusRaw as TaskStatus;
     }
 
-    const tasks = listTasks(filter);
+    const tasks = await listTasks(filter);
     return NextResponse.json(tasks);
   } catch (err) {
     return handleApiError(err);
@@ -40,7 +49,10 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
-    const task = createTask(body ?? {});
+    const task = await createTask(body ?? {}, {
+      actor_id: body?.actor_id,
+      actor_name: body?.actor_name,
+    });
     return NextResponse.json(task, { status: 201 });
   } catch (err) {
     return handleApiError(err);

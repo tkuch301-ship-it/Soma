@@ -7,23 +7,53 @@ import { formatDueDate, isOverdue } from "@/lib/date";
 interface TaskCardProps {
   task: TaskWithAssignee;
   onStatusChange: (id: number, status: TaskStatus) => void;
-  onEdit: (task: TaskWithAssignee) => void;
+  onOpenDetail: (task: TaskWithAssignee) => void;
   onDelete: (task: TaskWithAssignee) => void;
 }
 
-export default function TaskCard({ task, onStatusChange, onEdit, onDelete }: TaskCardProps) {
+export default function TaskCard({ task, onStatusChange, onOpenDetail, onDelete }: TaskCardProps) {
   const overdue = isOverdue(task.due_date, task.status);
+  const stepPercent = task.steps_total > 0 ? Math.round((task.steps_done / task.steps_total) * 100) : 0;
 
   return (
     <li className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
       <div className="flex items-start justify-between gap-2">
-        <h3 className="text-sm font-semibold text-slate-900 break-words">{task.title}</h3>
+        <button
+          type="button"
+          onClick={() => onOpenDetail(task)}
+          className="text-left text-sm font-semibold text-slate-900 break-words hover:text-indigo-700 hover:underline"
+        >
+          {task.title}
+        </button>
       </div>
 
       {task.description ? (
         <p className="line-clamp-3 text-xs text-slate-600 whitespace-pre-wrap">
           {task.description}
         </p>
+      ) : null}
+
+      {task.steps_total > 0 ? (
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center justify-between text-xs text-slate-500">
+            <span>
+              工程 {task.steps_done}/{task.steps_total}
+            </span>
+          </div>
+          <div
+            role="progressbar"
+            aria-label={`「${task.title}」の工程進捗`}
+            aria-valuenow={stepPercent}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100"
+          >
+            <div
+              className="h-full rounded-full bg-indigo-500 transition-all"
+              style={{ width: `${stepPercent}%` }}
+            />
+          </div>
+        </div>
       ) : null}
 
       <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -62,11 +92,11 @@ export default function TaskCard({ task, onStatusChange, onEdit, onDelete }: Tas
         <div className="flex gap-1">
           <button
             type="button"
-            onClick={() => onEdit(task)}
-            aria-label={`「${task.title}」を編集`}
+            onClick={() => onOpenDetail(task)}
+            aria-label={`「${task.title}」の詳細を開く`}
             className="rounded-md px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900"
           >
-            編集
+            詳細
           </button>
           <button
             type="button"

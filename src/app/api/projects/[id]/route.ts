@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { updateTask, deleteTask } from "@/lib/repo";
+import { getProjectById, updateProject, deleteProject } from "@/lib/repo";
 import { handleApiError } from "@/lib/apiError";
-import { ValidationError } from "@/lib/errors";
+import { NotFoundError, ValidationError } from "@/lib/errors";
 
 export const runtime = "nodejs";
 
@@ -13,6 +13,22 @@ function parseId(raw: string): number {
   return id;
 }
 
+export async function GET(
+  _req: NextRequest,
+  context: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { id } = await context.params;
+    const project = await getProjectById(parseId(id));
+    if (!project) {
+      throw new NotFoundError(`project ${id} not found`);
+    }
+    return NextResponse.json(project);
+  } catch (err) {
+    return handleApiError(err);
+  }
+}
+
 export async function PATCH(
   req: NextRequest,
   context: { params: Promise<{ id: string }> }
@@ -20,11 +36,11 @@ export async function PATCH(
   try {
     const { id } = await context.params;
     const body = await req.json().catch(() => ({}));
-    const task = await updateTask(parseId(id), body ?? {}, {
+    const project = await updateProject(parseId(id), body ?? {}, {
       actor_id: body?.actor_id,
       actor_name: body?.actor_name,
     });
-    return NextResponse.json(task);
+    return NextResponse.json(project);
   } catch (err) {
     return handleApiError(err);
   }
@@ -37,7 +53,7 @@ export async function DELETE(
   try {
     const { id } = await context.params;
     const body = await req.json().catch(() => ({}));
-    await deleteTask(parseId(id), {
+    await deleteProject(parseId(id), {
       actor_id: body?.actor_id,
       actor_name: body?.actor_name,
     });
