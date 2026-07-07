@@ -1,2 +1,6 @@
 # Jen plugin runtime state/logs
 .jen/
+
+# Claude Code runtime (subagent worktrees, local settings)
+.claude/worktrees/
+.claude/settings.local.json
