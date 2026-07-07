@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { deleteMember } from "@/lib/repo";
+import { listTaskActivities } from "@/lib/repo";
 import { handleApiError } from "@/lib/apiError";
 import { ValidationError } from "@/lib/errors";
 
@@ -13,18 +13,14 @@ function parseId(raw: string): number {
   return id;
 }
 
-export async function DELETE(
-  req: NextRequest,
+export async function GET(
+  _req: NextRequest,
   context: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id } = await context.params;
-    const body = await req.json().catch(() => ({}));
-    await deleteMember(parseId(id), {
-      actor_id: body?.actor_id,
-      actor_name: body?.actor_name,
-    });
-    return new NextResponse(null, { status: 204 });
+    const activities = await listTaskActivities(parseId(id), 50);
+    return NextResponse.json(activities);
   } catch (err) {
     return handleApiError(err);
   }
