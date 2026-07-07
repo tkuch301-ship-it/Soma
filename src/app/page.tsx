@@ -1,43 +1,38 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import type { Member, MemberStat, TaskStatus, TaskWithAssignee } from "@/lib/repo";
-import { api, ApiError, type TaskInput } from "@/lib/api";
-import Board from "@/components/Board";
-import TaskForm from "@/components/TaskForm";
+import { useRouter } from "next/navigation";
+import type { Member, ProjectWithStats } from "@/lib/repo";
+import { api, ApiError, type ProjectInput } from "@/lib/api";
+import ActorSelector from "@/components/ActorSelector";
+import ProjectCard from "@/components/ProjectCard";
+import ProjectForm from "@/components/ProjectForm";
 import MemberPanel from "@/components/MemberPanel";
-import StatsPanel from "@/components/StatsPanel";
-import FilterBar from "@/components/FilterBar";
+import EmptyState from "@/components/EmptyState";
 
 export default function Home() {
+  const router = useRouter();
+
+  const [projects, setProjects] = useState<ProjectWithStats[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
-  const [tasks, setTasks] = useState<TaskWithAssignee[]>([]);
-  const [stats, setStats] = useState<MemberStat[]>([]);
 
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  const [filterAssigneeId, setFilterAssigneeId] = useState<"all" | number>("all");
-
   const [formOpen, setFormOpen] = useState(false);
-  const [editingTask, setEditingTask] = useState<TaskWithAssignee | null>(null);
+  const [editingProject, setEditingProject] = useState<ProjectWithStats | null>(null);
   const [formSubmitting, setFormSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
   const [memberError, setMemberError] = useState<string | null>(null);
   const [memberAdding, setMemberAdding] = useState(false);
 
-  const refresh = useCallback(async (assigneeFilter: "all" | number) => {
+  const refresh = useCallback(async () => {
     setLoadError(null);
     try {
-      const [membersRes, tasksRes, statsRes] = await Promise.all([
-        api.listMembers(),
-        api.listTasks(assigneeFilter === "all" ? {} : { assigneeId: assigneeFilter }),
-        api.memberStats(),
-      ]);
+      const [projectsRes, membersRes] = await Promise.all([api.listProjects(), api.listMembers()]);
+      setProjects(projectsRes);
       setMembers(membersRes);
-      setTasks(tasksRes);
-      setStats(statsRes);
     } catch (err) {
       setLoadError(err instanceof ApiError ? err.message : "データの取得に失敗しました");
     } finally {
@@ -46,66 +41,72 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    refresh(filterAssigneeId);
-    // refresh identity is stable (empty deps); only filterAssigneeId changes matter here.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterAssigneeId]);
+    refresh();
+  }, [refresh]);
 
-  async function handleStatusChange(id: number, status: TaskStatus) {
-    try {
-      await api.updateTask(id, { status });
-      await refresh(filterAssigneeId);
-    } catch (err) {
-      setLoadError(err instanceof ApiError ? err.message : "ステータスの更新に失敗しました");
-    }
-  }
-
-  async function handleDeleteTask(task: TaskWithAssignee) {
-    if (!window.confirm(`「${task.title}」を削除しますか？この操作は取り消せません。`)) {
-      return;
-    }
-    try {
-      await api.deleteTask(task.id);
-      await refresh(filterAssigneeId);
-    } catch (err) {
-      setLoadError(err instanceof ApiError ? err.message : "タスクの削除に失敗しました");
-    }
+  function handleOpenProject(project: ProjectWithStats) {
+    router.push(`/projects/${project.id}`);
   }
 
   function handleOpenCreateForm() {
-    setEditingTask(null);
+    setEditingProject(null);
     setFormError(null);
     setFormOpen(true);
   }
 
-  function handleOpenEditForm(task: TaskWithAssignee) {
-    setEditingTask(task);
+  function handleOpenEditForm(project: ProjectWithStats) {
+    setEditingProject(project);
     setFormError(null);
     setFormOpen(true);
   }
 
   function handleCloseForm() {
     setFormOpen(false);
-    setEditingTask(null);
+    setEditingProject(null);
     setFormError(null);
   }
 
-  async function handleSubmitForm(input: TaskInput) {
+  async function handleSubmitForm(input: ProjectInput) {
     setFormSubmitting(true);
     setFormError(null);
     try {
-      if (editingTask) {
-        await api.updateTask(editingTask.id, input);
+      if (editingProject) {
+        await api.updateProject(editingProject.id, input);
       } else {
-        await api.createTask(input);
+        await api.createProject(input);
       }
-      await refresh(filterAssigneeId);
+      await refresh();
       setFormOpen(false);
-      setEditingTask(null);
+      setEditingProject(null);
     } catch (err) {
-      setFormError(err instanceof ApiError ? err.message : "タスクの保存に失敗しました");
+      setFormError(err instanceof ApiError ? err.message : "プロジェクトの保存に失敗しました");
     } finally {
       setFormSubmitting(false);
+    }
+  }
+
+  async function handleDeleteProject(project: ProjectWithStats) {
+    if (
+      !window.confirm(`「${project.name}」を削除しますか？関連するタスク・工程も削除され、取り消せません。`)
+    ) {
+      return;
+    }
+    try {
+      await api.deleteProject(project.id);
+      await refresh();
+    } catch (err) {
+      setLoadError(err instanceof ApiError ? err.message : "プロジェクトの削除に失敗しました");
+    }
+  }
+
+  async function handleToggleArchive(project: ProjectWithStats) {
+    try {
+      await api.updateProject(project.id, {
+        status: project.status === "archived" ? "active" : "archived",
+      });
+      await refresh();
+    } catch (err) {
+      setLoadError(err instanceof ApiError ? err.message : "プロジェクトの更新に失敗しました");
     }
   }
 
@@ -114,7 +115,7 @@ export default function Home() {
     setMemberError(null);
     try {
       await api.createMember(name);
-      await refresh(filterAssigneeId);
+      await refresh();
       return true;
     } catch (err) {
       if (err instanceof ApiError && /already exists/i.test(err.message)) {
@@ -130,21 +131,14 @@ export default function Home() {
 
   async function handleDeleteMember(member: Member) {
     if (
-      !window.confirm(
-        `「${member.name}」を削除しますか？担当していたタスクは未割当になります。`
-      )
+      !window.confirm(`「${member.name}」を削除しますか？担当していたタスクは未割当になります。`)
     ) {
       return;
     }
     setMemberError(null);
-    const nextFilter = filterAssigneeId === member.id ? "all" : filterAssigneeId;
     try {
       await api.deleteMember(member.id);
-      if (nextFilter !== filterAssigneeId) {
-        setFilterAssigneeId(nextFilter);
-      } else {
-        await refresh(filterAssigneeId);
-      }
+      await refresh();
     } catch (err) {
       setMemberError(err instanceof ApiError ? err.message : "部員の削除に失敗しました");
     }
@@ -152,11 +146,14 @@ export default function Home() {
 
   return (
     <main className="mx-auto flex min-h-screen max-w-6xl flex-col gap-6 p-4 sm:p-6">
-      <header className="flex flex-col gap-1">
-        <h1 className="text-2xl font-bold text-slate-900">Soma — サークルタスクボード</h1>
-        <p className="text-sm text-slate-500">
-          サークル部員のタスク進捗を管理・共有するボードです。
-        </p>
+      <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex flex-col gap-1">
+          <h1 className="text-2xl font-bold text-slate-900">Soma — プロジェクト一覧</h1>
+          <p className="text-sm text-slate-500">
+            サークルのプロジェクト・タスク・工程の進捗を管理・共有するボードです。
+          </p>
+        </div>
+        <ActorSelector members={members} />
       </header>
 
       {loading ? (
@@ -173,7 +170,7 @@ export default function Home() {
             type="button"
             onClick={() => {
               setLoading(true);
-              refresh(filterAssigneeId);
+              refresh();
             }}
             className="rounded-md border border-red-300 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-100"
           >
@@ -184,23 +181,36 @@ export default function Home() {
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
           <div className="flex flex-col gap-4 lg:col-span-2">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <FilterBar members={members} value={filterAssigneeId} onChange={setFilterAssigneeId} />
+              <h2 className="text-base font-semibold text-slate-900">プロジェクト</h2>
               <button
                 type="button"
                 onClick={handleOpenCreateForm}
-                aria-label="タスクを追加"
+                aria-label="プロジェクトを作成"
                 className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
               >
-                + タスクを追加
+                + プロジェクトを作成
               </button>
             </div>
 
-            <Board
-              tasks={tasks}
-              onStatusChange={handleStatusChange}
-              onEdit={handleOpenEditForm}
-              onDelete={handleDeleteTask}
-            />
+            {projects.length === 0 ? (
+              <EmptyState
+                title="まだプロジェクトがありません。最初のプロジェクトを作成しましょう"
+                description="「プロジェクトを作成」ボタンから新しいプロジェクトを作成できます。"
+              />
+            ) : (
+              <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                {projects.map((project) => (
+                  <ProjectCard
+                    key={project.id}
+                    project={project}
+                    onOpen={handleOpenProject}
+                    onEdit={handleOpenEditForm}
+                    onDelete={handleDeleteProject}
+                    onToggleArchive={handleToggleArchive}
+                  />
+                ))}
+              </ul>
+            )}
           </div>
 
           <div className="flex flex-col gap-8">
@@ -211,15 +221,13 @@ export default function Home() {
               error={memberError}
               adding={memberAdding}
             />
-            <StatsPanel stats={stats} />
           </div>
         </div>
       )}
 
-      <TaskForm
+      <ProjectForm
         open={formOpen}
-        members={members}
-        initialTask={editingTask}
+        initialProject={editingProject}
         onCancel={handleCloseForm}
         onSubmit={handleSubmitForm}
         submitting={formSubmitting}
