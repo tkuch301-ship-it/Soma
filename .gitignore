@@ -1,2 +1,24 @@
 # Jen plugin runtime state/logs
 .jen/
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Next.js
+.next/
+out/
+next-env.d.ts
+
+# SQLite data
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Env
+.env*.local
+
+# Misc
+.DS_Store
