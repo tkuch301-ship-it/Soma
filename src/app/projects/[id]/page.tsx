@@ -92,6 +92,17 @@ export default function ProjectBoardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filterAssigneeId, projectId]);
 
+  async function handleDeleteActivity(activity: Activity) {
+    const label = activity.type === "comment" ? "このコメント" : "この履歴";
+    if (!window.confirm(`${label}を削除しますか？`)) return;
+    try {
+      await api.deleteActivity(activity.id);
+      await refresh(filterAssigneeId);
+    } catch (err) {
+      setLoadError(err instanceof ApiError ? err.message : "履歴の削除に失敗しました");
+    }
+  }
+
   async function handleStatusChange(id: number, status: TaskStatus) {
     try {
       await api.updateTask(id, { status });
@@ -281,6 +292,7 @@ export default function ProjectBoardPage() {
               <ActivityFeed
                 activities={activities}
                 emptyTitle="このプロジェクトの動きはまだありません"
+                onDelete={handleDeleteActivity}
               />
             </section>
           </div>

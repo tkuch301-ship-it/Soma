@@ -6,8 +6,8 @@ import EmptyState from "@/components/EmptyState";
 interface ActivityFeedProps {
   activities: Activity[];
   emptyTitle?: string;
-  /** When provided, "comment"-type rows get a delete button (used by the task detail history tab). */
-  onDeleteComment?: (activity: Activity) => void;
+  /** When provided, every row gets a delete button (comments and history entries alike). */
+  onDelete?: (activity: Activity) => void;
 }
 
 function commentText(activity: Activity): string {
@@ -18,7 +18,7 @@ function commentText(activity: Activity): string {
 export default function ActivityFeed({
   activities,
   emptyTitle = "まだ動きがありません",
-  onDeleteComment,
+  onDelete,
 }: ActivityFeedProps) {
   if (activities.length === 0) {
     return <EmptyState title={emptyTitle} />;
@@ -50,10 +50,10 @@ export default function ActivityFeed({
                   </div>
                   <p className="whitespace-pre-wrap text-slate-800">{commentText(activity)}</p>
                 </div>
-                {onDeleteComment ? (
+                {onDelete ? (
                   <button
                     type="button"
-                    onClick={() => onDeleteComment(activity)}
+                    onClick={() => onDelete(activity)}
                     aria-label="コメントを削除"
                     className="shrink-0 rounded-md px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-100"
                   >
@@ -62,7 +62,19 @@ export default function ActivityFeed({
                 ) : null}
               </div>
             ) : (
-              <p className="text-slate-800">{formatActivityText(activity)}</p>
+              <div className="flex items-start justify-between gap-2">
+                <p className="flex-1 text-slate-800">{formatActivityText(activity)}</p>
+                {onDelete ? (
+                  <button
+                    type="button"
+                    onClick={() => onDelete(activity)}
+                    aria-label="この履歴を削除"
+                    className="shrink-0 rounded-md px-1.5 py-0.5 text-xs text-slate-400 hover:bg-red-50 hover:text-red-600"
+                  >
+                    ✕
+                  </button>
+                ) : null}
+              </div>
             )}
             <time dateTime={activity.created_at} className="text-xs text-slate-400">
               {formatRelativeTime(activity.created_at)}

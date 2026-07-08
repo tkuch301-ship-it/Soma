@@ -931,17 +931,12 @@ export async function createComment(
   return data as Activity;
 }
 
-/** Only type="comment" activity rows may be deleted through this path; any other type is a 400. */
 export async function deleteActivity(id: number): Promise<void> {
   const supabase = getSupabase();
-  const { data, error } = await supabase.from("activities").select("*").eq("id", id).maybeSingle();
+  const { data, error } = await supabase.from("activities").select("id").eq("id", id).maybeSingle();
   if (error) throw mapPostgrestError(error, "failed to load activity");
   if (!data) {
     throw new NotFoundError(`activity ${id} not found`);
-  }
-  const activity = data as Activity;
-  if (activity.type !== "comment") {
-    throw new ValidationError("only comment activities can be deleted");
   }
 
   const { error: deleteError } = await supabase.from("activities").delete().eq("id", id);
