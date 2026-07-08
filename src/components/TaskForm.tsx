@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useState } from "react";
 import type { Member, TaskStatus, TaskWithAssignee } from "@/lib/repo";
 import type { TaskInput } from "@/lib/api";
 import { STATUS_META, TASK_STATUSES } from "@/lib/statusMeta";
+import AssigneePicker from "@/components/AssigneePicker";
 
 interface TaskFormProps {
   open: boolean;
@@ -104,26 +105,12 @@ export default function TaskForm({
             />
           </div>
 
-          <div className="flex flex-col gap-1">
-            <label htmlFor="task-assignee" className="text-sm font-medium text-slate-700">
-              担当者（複数選択可）
-            </label>
-            <select
-              id="task-assignee"
-              multiple
-              value={assigneeIds.map(String)}
-              onChange={(e) =>
-                setAssigneeIds(Array.from(e.target.selectedOptions, (o) => Number(o.value)))
-              }
-              className="min-h-24 rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-            >
-              {members.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.name}
-                </option>
-              ))}
-            </select>
-          </div>
+          <AssigneePicker
+            members={members}
+            selectedIds={assigneeIds}
+            onChange={setAssigneeIds}
+            idPrefix="task-form"
+          />
 
           <div className="grid grid-cols-2 gap-3">
             <div className="flex flex-col gap-1">

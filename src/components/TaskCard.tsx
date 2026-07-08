@@ -56,10 +56,31 @@ export default function TaskCard({ task, onStatusChange, onOpenDetail, onDelete 
         </div>
       ) : null}
 
-      <div className="flex flex-wrap items-center gap-2 text-xs">
-        <span className="rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 font-medium text-indigo-700">
-          {task.assignees.length > 0 ? task.assignees.map((a) => a.name).join("、") : "未割当"}
-        </span>
+      <div className="flex flex-wrap items-center gap-1.5 text-xs">
+        {task.assignees.length === 0 ? (
+          <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 font-medium text-slate-500">
+            未割当
+          </span>
+        ) : (
+          <>
+            {task.assignees.slice(0, 2).map((a) => (
+              <span
+                key={a.id}
+                className="rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 font-medium text-indigo-700"
+              >
+                {a.name}
+              </span>
+            ))}
+            {task.assignees.length > 2 ? (
+              <span
+                className="rounded-full border border-indigo-200 bg-indigo-100 px-2 py-0.5 font-medium text-indigo-700"
+                title={task.assignees.slice(2).map((a) => a.name).join("、")}
+              >
+                +{task.assignees.length - 2}
+              </span>
+            ) : null}
+          </>
+        )}
         <span
           className={
             overdue
