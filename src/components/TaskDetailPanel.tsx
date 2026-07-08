@@ -199,14 +199,15 @@ export default function TaskDetailPanel({ task, members, onClose, onUpdated, onD
     }
   }
 
-  async function handleDeleteComment(activity: Activity) {
+  async function handleDeleteActivity(activity: Activity) {
     if (!task) return;
-    if (!window.confirm("このコメントを削除しますか？")) return;
+    const label = activity.type === "comment" ? "このコメント" : "この履歴";
+    if (!window.confirm(`${label}を削除しますか？`)) return;
     try {
       await api.deleteActivity(activity.id);
       await loadActivities(task.id);
     } catch (err) {
-      setCommentError(err instanceof ApiError ? err.message : "コメントの削除に失敗しました");
+      setCommentError(err instanceof ApiError ? err.message : "削除に失敗しました");
     }
   }
 
@@ -414,7 +415,7 @@ export default function TaskDetailPanel({ task, members, onClose, onUpdated, onD
                 <ActivityFeed
                   activities={activities}
                   emptyTitle="このタスクの履歴・コメントはまだありません"
-                  onDeleteComment={handleDeleteComment}
+                  onDelete={handleDeleteActivity}
                 />
               )}
             </div>

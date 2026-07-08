@@ -245,10 +245,12 @@ describe.skipIf(!hasSupabaseEnv)("repo integration (Supabase)", () => {
     const afterComment = await listTaskActivities(task.id);
     expect(afterComment.some((a) => a.id === comment.id && a.type === "comment")).toBe(true);
 
-    // Only comment-type activities can be deleted via deleteActivity.
+    // Any activity row can be deleted, history entries included.
     const statusActivity = statusHistory.find((a) => a.type === "task_status_changed");
     if (statusActivity) {
-      await expect(deleteActivity(statusActivity.id)).rejects.toThrow(ValidationError);
+      await deleteActivity(statusActivity.id);
+      const afterHistoryDelete = await listTaskActivities(task.id);
+      expect(afterHistoryDelete.some((a) => a.id === statusActivity.id)).toBe(false);
     }
 
     await deleteActivity(comment.id);
