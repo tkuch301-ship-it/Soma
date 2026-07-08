@@ -1,6 +1,6 @@
 import type { TaskStatus } from "@/lib/repo";
 
-export const TASK_STATUSES: TaskStatus[] = ["todo", "doing", "done"];
+export const TASK_STATUSES: TaskStatus[] = ["todo", "doing", "review", "done"];
 
 interface StatusMeta {
   label: string;
@@ -18,6 +18,11 @@ export const STATUS_META: Record<TaskStatus, StatusMeta> = {
     label: "進行中",
     badgeClass: "bg-amber-100 text-amber-800 border border-amber-300",
     columnHeaderClass: "bg-amber-100 text-amber-900 border-amber-300",
+  },
+  review: {
+    label: "確認待ち",
+    badgeClass: "bg-indigo-100 text-indigo-800 border border-indigo-300",
+    columnHeaderClass: "bg-indigo-100 text-indigo-900 border-indigo-300",
   },
   done: {
     label: "完了",

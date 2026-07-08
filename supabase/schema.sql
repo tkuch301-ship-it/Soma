@@ -1,8 +1,14 @@
--- Soma v2 schema (PostgreSQL / Supabase)
+-- Soma v3 schema (PostgreSQL / Supabase)
 --
 -- Paste this whole file into the Supabase SQL Editor (Project > SQL Editor > New query)
--- and run it once. It is safe to re-run: every statement is idempotent
--- (`if not exists` / `create or replace` style guards).
+-- and run it once for a brand-new install. It is safe to re-run: every
+-- statement is idempotent (`if not exists` / `create or replace` style
+-- guards).
+--
+-- If you already have a v2 database with data in it, do NOT run this file —
+-- run supabase/migrations/002_v3.sql instead (it upgrades tasks/assignees in
+-- place without dropping any data). This file describes the same end state
+-- that migration produces, for fresh installs only.
 --
 -- Row Level Security is enabled on every table but no policies are created.
 -- The app talks to Supabase exclusively through the service_role key from
@@ -38,11 +44,19 @@ create table if not exists tasks (
   project_id bigint not null references projects(id) on delete cascade,
   title text not null,
   description text not null default '',
-  assignee_id bigint references members(id) on delete set null,
-  status text not null default 'todo' check (status in ('todo', 'doing', 'done')),
+  status text not null default 'todo' check (status in ('todo', 'doing', 'review', 'done')),
   due_date date,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
+);
+
+-- ---------------------------------------------------------------------------
+-- task_assignees (many-to-many: a task can have multiple assignees)
+-- ---------------------------------------------------------------------------
+create table if not exists task_assignees (
+  task_id bigint not null references tasks(id) on delete cascade,
+  member_id bigint not null references members(id) on delete cascade,
+  primary key (task_id, member_id)
 );
 
 -- ---------------------------------------------------------------------------
@@ -80,6 +94,7 @@ create table if not exists activities (
 alter table members enable row level security;
 alter table projects enable row level security;
 alter table tasks enable row level security;
+alter table task_assignees enable row level security;
 alter table steps enable row level security;
 alter table activities enable row level security;
 
@@ -87,7 +102,8 @@ alter table activities enable row level security;
 -- Indexes
 -- ---------------------------------------------------------------------------
 create index if not exists idx_tasks_project_id on tasks(project_id);
-create index if not exists idx_tasks_assignee_id on tasks(assignee_id);
+create index if not exists idx_task_assignees_task_id on task_assignees(task_id);
+create index if not exists idx_task_assignees_member_id on task_assignees(member_id);
 create index if not exists idx_steps_task_id on steps(task_id);
 create index if not exists idx_activities_project_id_created_at
   on activities(project_id, created_at desc);
