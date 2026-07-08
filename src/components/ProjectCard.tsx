@@ -50,7 +50,15 @@ export default function ProjectCard({
 
       <p className="text-xs text-slate-500">期限: {formatDueDate(project.due_date)}</p>
 
-      <div className="mt-1 flex flex-wrap justify-end gap-1">
+      <div className="mt-1 flex flex-wrap items-center justify-end gap-1">
+        <button
+          type="button"
+          onClick={() => onOpen(project)}
+          aria-label={`「${project.name}」のボードを開く`}
+          className="mr-auto rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500"
+        >
+          開く →
+        </button>
         <button
           type="button"
           onClick={() => onToggleArchive(project)}
