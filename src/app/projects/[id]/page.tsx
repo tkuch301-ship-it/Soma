@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import type { Activity, Member, MemberStat, ProjectWithStats, TaskStatus, TaskWithAssignee } from "@/lib/repo";
@@ -36,8 +36,6 @@ export default function ProjectBoardPage() {
   const [formError, setFormError] = useState<string | null>(null);
 
   const [detailTask, setDetailTask] = useState<TaskWithAssignee | null>(null);
-
-  const membersById = useMemo(() => new Map(members.map((m) => [m.id, m.name])), [members]);
 
   const refresh = useCallback(
     async (assigneeFilter: "all" | number): Promise<TaskWithAssignee[] | undefined> => {
@@ -247,7 +245,6 @@ export default function ProjectBoardPage() {
               </h2>
               <ActivityFeed
                 activities={activities}
-                membersById={membersById}
                 emptyTitle="このプロジェクトの動きはまだありません"
               />
             </section>

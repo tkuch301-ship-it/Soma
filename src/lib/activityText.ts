@@ -5,15 +5,10 @@ const FIELD_LABELS: Record<string, string> = {
   name: "名前",
   title: "タイトル",
   description: "説明",
-  assignee_id: "担当者",
+  assignees: "担当者",
   status: "ステータス",
   due_date: "期限",
 };
-
-interface FormatOptions {
-  /** Optional member id -> name lookup, used to render assignee_id changes as names instead of ids. */
-  membersById?: Map<number, string>;
-}
 
 function actorLabel(activity: Activity): string {
   return activity.actor_name ?? "(不明)";
@@ -37,21 +32,17 @@ function dueDateValue(value: unknown): string {
   return String(value);
 }
 
-function assigneeValue(value: unknown, membersById?: Map<number, string>): string {
-  if (value === null || value === undefined) return "未割当";
-  const id = Number(value);
-  if (Number.isInteger(id) && membersById?.has(id)) {
-    return membersById.get(id) as string;
-  }
-  return Number.isInteger(id) ? `#${id}` : String(value);
+function assigneesValue(value: unknown): string {
+  if (!Array.isArray(value) || value.length === 0) return "未割当";
+  return value.map((name) => String(name)).join("、");
 }
 
-function formatFieldValue(field: string, value: unknown, membersById?: Map<number, string>): string {
+function formatFieldValue(field: string, value: unknown): string {
   switch (field) {
     case "status":
       return statusLabel(value);
-    case "assignee_id":
-      return assigneeValue(value, membersById);
+    case "assignees":
+      return assigneesValue(value);
     case "due_date":
       return dueDateValue(value);
     default:
@@ -64,7 +55,7 @@ function isFieldChange(value: unknown): value is { before: unknown; after: unkno
 }
 
 /** Renders a `field: {before, after}` detail map (task_updated / project_updated) as Japanese fragments. */
-function formatChanges(detail: Record<string, unknown>, membersById?: Map<number, string>): string {
+function formatChanges(detail: Record<string, unknown>): string {
   // Some payloads nest the per-field map under "changes"; support both shapes defensively.
   const rawChanges =
     "changes" in detail && typeof detail.changes === "object" && detail.changes !== null
@@ -76,8 +67,8 @@ function formatChanges(detail: Record<string, unknown>, membersById?: Map<number
     .map(([field, value]) => {
       const change = value as { before: unknown; after: unknown };
       const label = FIELD_LABELS[field] ?? field;
-      const before = formatFieldValue(field, change.before, membersById);
-      const after = formatFieldValue(field, change.after, membersById);
+      const before = formatFieldValue(field, change.before);
+      const after = formatFieldValue(field, change.after);
       return `${label}を ${before}→${after}`;
     });
 
@@ -89,16 +80,15 @@ function formatChanges(detail: Record<string, unknown>, membersById?: Map<number
  * activity feed / task history tab. Unknown activity types fall back to
  * showing the raw `type` string so nothing is silently hidden.
  */
-export function formatActivityText(activity: Activity, options: FormatOptions = {}): string {
+export function formatActivityText(activity: Activity): string {
   const actor = actorLabel(activity);
   const detail = (activity.detail ?? {}) as Record<string, unknown>;
-  const { membersById } = options;
 
   switch (activity.type) {
     case "project_created":
       return `${actor} が プロジェクト「${textValue(detail.name)}」を作成しました`;
     case "project_updated": {
-      const changes = formatChanges(detail, membersById);
+      const changes = formatChanges(detail);
       return changes
         ? `${actor} が プロジェクトを更新しました（${changes}）`
         : `${actor} が プロジェクトを更新しました`;
@@ -108,7 +98,7 @@ export function formatActivityText(activity: Activity, options: FormatOptions = 
     case "task_created":
       return `${actor} が タスク「${textValue(detail.title)}」を作成しました`;
     case "task_updated": {
-      const changes = formatChanges(detail, membersById);
+      const changes = formatChanges(detail);
       return changes
         ? `${actor} が タスクを更新しました（${changes}）`
         : `${actor} が タスクを更新しました`;
@@ -128,6 +118,8 @@ export function formatActivityText(activity: Activity, options: FormatOptions = 
       return `${actor} が 工程「${textValue(detail.title)}」を未完了に戻しました`;
     case "step_deleted":
       return `${actor} が 工程「${textValue(detail.title)}」を削除しました`;
+    case "comment":
+      return `${actor} が コメントを追加しました：${textValue(detail.text)}`;
     case "member_added":
       return `${actor} が 部員「${textValue(detail.name)}」を追加しました`;
     case "member_deleted":

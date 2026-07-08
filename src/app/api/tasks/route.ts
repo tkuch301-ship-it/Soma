@@ -5,7 +5,7 @@ import { ValidationError } from "@/lib/errors";
 
 export const runtime = "nodejs";
 
-const STATUSES: TaskStatus[] = ["todo", "doing", "done"];
+const STATUSES: TaskStatus[] = ["todo", "doing", "review", "done"];
 
 export async function GET(req: NextRequest) {
   try {

@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useState } from "react";
 import type { Activity, Member, Step, TaskStatus, TaskWithAssignee } from "@/lib/repo";
 import { api, ApiError, type TaskInput } from "@/lib/api";
 import { STATUS_META, TASK_STATUSES } from "@/lib/statusMeta";
@@ -22,7 +22,7 @@ export default function TaskDetailPanel({ task, members, onClose, onUpdated, onD
 
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [assigneeId, setAssigneeId] = useState("");
+  const [assigneeIds, setAssigneeIds] = useState<number[]>([]);
   const [dueDate, setDueDate] = useState("");
   const [status, setStatus] = useState<TaskStatus>("todo");
   const [infoSaving, setInfoSaving] = useState(false);
@@ -37,8 +37,6 @@ export default function TaskDetailPanel({ task, members, onClose, onUpdated, onD
   const [activitiesLoading, setActivitiesLoading] = useState(false);
   const [activitiesError, setActivitiesError] = useState<string | null>(null);
 
-  const membersById = useMemo(() => new Map(members.map((m) => [m.id, m.name])), [members]);
-
   // Keyed on task.id (not the whole task object) so that background refreshes
   // of the same task (e.g. after toggling a step) don't reset the active tab
   // or clobber in-progress edits in the "基本情報" form.
@@ -47,7 +45,7 @@ export default function TaskDetailPanel({ task, members, onClose, onUpdated, onD
     setTab("info");
     setTitle(task.title);
     setDescription(task.description);
-    setAssigneeId(task.assignee_id ? String(task.assignee_id) : "");
+    setAssigneeIds(task.assignees.map((a) => a.id));
     setDueDate(task.due_date ?? "");
     setStatus(task.status);
     setInfoError(null);
@@ -103,7 +101,7 @@ export default function TaskDetailPanel({ task, members, onClose, onUpdated, onD
     const input: Partial<TaskInput> = {
       title: trimmedTitle,
       description,
-      assignee_id: assigneeId === "" ? null : Number(assigneeId),
+      assignee_ids: assigneeIds,
       due_date: dueDate === "" ? null : dueDate,
       status,
     };
@@ -250,15 +248,17 @@ export default function TaskDetailPanel({ task, members, onClose, onUpdated, onD
 
               <div className="flex flex-col gap-1">
                 <label htmlFor="detail-assignee" className="text-sm font-medium text-slate-700">
-                  担当者
+                  担当者（複数選択可）
                 </label>
                 <select
                   id="detail-assignee"
-                  value={assigneeId}
-                  onChange={(e) => setAssigneeId(e.target.value)}
-                  className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  multiple
+                  value={assigneeIds.map(String)}
+                  onChange={(e) =>
+                    setAssigneeIds(Array.from(e.target.selectedOptions, (o) => Number(o.value)))
+                  }
+                  className="min-h-24 rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                 >
-                  <option value="">未割当</option>
                   {members.map((m) => (
                     <option key={m.id} value={m.id}>
                       {m.name}
@@ -349,7 +349,6 @@ export default function TaskDetailPanel({ task, members, onClose, onUpdated, onD
             ) : (
               <ActivityFeed
                 activities={activities}
-                membersById={membersById}
                 emptyTitle="このタスクの履歴はまだありません"
               />
             )

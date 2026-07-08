@@ -58,7 +58,7 @@ export default function TaskCard({ task, onStatusChange, onOpenDetail, onDelete 
 
       <div className="flex flex-wrap items-center gap-2 text-xs">
         <span className="rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 font-medium text-indigo-700">
-          {task.assignee_name ?? "未割当"}
+          {task.assignees.length > 0 ? task.assignees.map((a) => a.name).join("、") : "未割当"}
         </span>
         <span
           className={
