@@ -10,6 +10,9 @@ import ProjectForm from "@/components/ProjectForm";
 import MemberPanel from "@/components/MemberPanel";
 import EmptyState from "@/components/EmptyState";
 import DeadlinePanel from "@/components/DeadlinePanel";
+import { useAutoRefresh } from "@/lib/useAutoRefresh";
+
+const AUTO_REFRESH_INTERVAL_MS = 15000;
 
 export default function Home() {
   const router = useRouter();
@@ -29,7 +32,9 @@ export default function Home() {
   const [memberError, setMemberError] = useState<string | null>(null);
   const [memberAdding, setMemberAdding] = useState(false);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (options?: { silent?: boolean }) => {
+    const silent = options?.silent ?? false;
+    if (!silent) setLoading(true);
     setLoadError(null);
     try {
       const [projectsRes, membersRes, tasksRes] = await Promise.all([
@@ -41,7 +46,11 @@ export default function Home() {
       setMembers(membersRes);
       setAllTasks(tasksRes);
     } catch (err) {
-      setLoadError(err instanceof ApiError ? err.message : "データの取得に失敗しました");
+      // Silent (background) refresh failures shouldn't clobber the screen
+      // with an error banner; the next successful poll will recover.
+      if (!silent) {
+        setLoadError(err instanceof ApiError ? err.message : "データの取得に失敗しました");
+      }
     } finally {
       setLoading(false);
     }
@@ -55,6 +64,13 @@ export default function Home() {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  // プロジェクト作成/編集フォームが開いている間は、入力内容が巻き戻らないよう
+  // 自動更新を止める。それ以外は15秒ごとにサイレント更新（スピナーなし）。
+  useAutoRefresh(() => refresh({ silent: true }), {
+    intervalMs: AUTO_REFRESH_INTERVAL_MS,
+    enabled: !formOpen,
+  });
 
   function handleOpenProject(project: ProjectWithStats) {
     router.push(`/projects/${project.id}`);
@@ -160,7 +176,18 @@ export default function Home() {
     <main className="mx-auto flex min-h-screen max-w-6xl flex-col gap-6 p-4 sm:p-6">
       <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="flex flex-col gap-1">
-          <h1 className="text-2xl font-bold text-slate-900">Soma — プロジェクト一覧</h1>
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-2xl font-bold text-slate-900">Soma — プロジェクト一覧</h1>
+            <button
+              type="button"
+              onClick={() => refresh()}
+              aria-label="今すぐ更新"
+              title="今すぐ更新"
+              className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+            >
+              ↻ 更新
+            </button>
+          </div>
           <p className="text-sm text-slate-500">
             サークルのプロジェクト・タスク・工程の進捗を管理・共有するボードです。
           </p>
@@ -180,10 +207,7 @@ export default function Home() {
           <p>{loadError}</p>
           <button
             type="button"
-            onClick={() => {
-              setLoading(true);
-              refresh();
-            }}
+            onClick={() => refresh()}
             className="rounded-md border border-red-300 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-100"
           >
             再読み込み
