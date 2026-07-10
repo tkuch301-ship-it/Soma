@@ -7,8 +7,10 @@ import { STATUS_META, TASK_STATUSES } from "@/lib/statusMeta";
 import StepList from "@/components/StepList";
 import ActivityFeed from "@/components/ActivityFeed";
 import AssigneePicker from "@/components/AssigneePicker";
+import { useAutoRefresh } from "@/lib/useAutoRefresh";
 
 const COMMENT_MAX_LENGTH = 1000;
+const ACTIVITIES_AUTO_REFRESH_INTERVAL_MS = 15000;
 
 type Tab = "info" | "steps" | "history";
 
@@ -73,15 +75,20 @@ export default function TaskDetailPanel({ task, members, onClose, onUpdated, onD
     }
   }, []);
 
-  const loadActivities = useCallback(async (taskId: number) => {
-    setActivitiesLoading(true);
+  const loadActivities = useCallback(async (taskId: number, options?: { silent?: boolean }) => {
+    const silent = options?.silent ?? false;
+    if (!silent) setActivitiesLoading(true);
     setActivitiesError(null);
     try {
+      // Note: this only replaces the `activities` list, never `commentText`,
+      // so an in-progress comment draft is never clobbered by a background poll.
       setActivities(await api.listTaskActivities(taskId));
     } catch (err) {
-      setActivitiesError(err instanceof ApiError ? err.message : "履歴の取得に失敗しました");
+      if (!silent) {
+        setActivitiesError(err instanceof ApiError ? err.message : "履歴の取得に失敗しました");
+      }
     } finally {
-      setActivitiesLoading(false);
+      if (!silent) setActivitiesLoading(false);
     }
   }, []);
 
@@ -94,6 +101,16 @@ export default function TaskDetailPanel({ task, members, onClose, onUpdated, onD
     // task is opened.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [task?.id]);
+
+  // While the panel is open, silently refresh only the activities/comments
+  // feed every 15s so a teammate's new comment shows up without a reload.
+  // This never touches the comment textarea draft or the steps/info tabs.
+  useAutoRefresh(
+    () => {
+      if (task) loadActivities(task.id, { silent: true });
+    },
+    { intervalMs: ACTIVITIES_AUTO_REFRESH_INTERVAL_MS, enabled: task !== null }
+  );
 
   if (!task) return null;
 
