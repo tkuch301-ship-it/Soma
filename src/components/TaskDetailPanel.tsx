@@ -1,11 +1,14 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useState } from "react";
 import type { Activity, Member, Step, TaskStatus, TaskWithAssignee } from "@/lib/repo";
 import { api, ApiError, type TaskInput } from "@/lib/api";
 import { STATUS_META, TASK_STATUSES } from "@/lib/statusMeta";
 import StepList from "@/components/StepList";
 import ActivityFeed from "@/components/ActivityFeed";
+import AssigneePicker from "@/components/AssigneePicker";
+
+const COMMENT_MAX_LENGTH = 1000;
 
 type Tab = "info" | "steps" | "history";
 
@@ -22,7 +25,7 @@ export default function TaskDetailPanel({ task, members, onClose, onUpdated, onD
 
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [assigneeId, setAssigneeId] = useState("");
+  const [assigneeIds, setAssigneeIds] = useState<number[]>([]);
   const [dueDate, setDueDate] = useState("");
   const [status, setStatus] = useState<TaskStatus>("todo");
   const [infoSaving, setInfoSaving] = useState(false);
@@ -37,7 +40,9 @@ export default function TaskDetailPanel({ task, members, onClose, onUpdated, onD
   const [activitiesLoading, setActivitiesLoading] = useState(false);
   const [activitiesError, setActivitiesError] = useState<string | null>(null);
 
-  const membersById = useMemo(() => new Map(members.map((m) => [m.id, m.name])), [members]);
+  const [commentText, setCommentText] = useState("");
+  const [commentSubmitting, setCommentSubmitting] = useState(false);
+  const [commentError, setCommentError] = useState<string | null>(null);
 
   // Keyed on task.id (not the whole task object) so that background refreshes
   // of the same task (e.g. after toggling a step) don't reset the active tab
@@ -47,10 +52,12 @@ export default function TaskDetailPanel({ task, members, onClose, onUpdated, onD
     setTab("info");
     setTitle(task.title);
     setDescription(task.description);
-    setAssigneeId(task.assignee_id ? String(task.assignee_id) : "");
+    setAssigneeIds(task.assignees.map((a) => a.id));
     setDueDate(task.due_date ?? "");
     setStatus(task.status);
     setInfoError(null);
+    setCommentText("");
+    setCommentError(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [task?.id]);
 
@@ -103,7 +110,7 @@ export default function TaskDetailPanel({ task, members, onClose, onUpdated, onD
     const input: Partial<TaskInput> = {
       title: trimmedTitle,
       description,
-      assignee_id: assigneeId === "" ? null : Number(assigneeId),
+      assignee_ids: assigneeIds,
       due_date: dueDate === "" ? null : dueDate,
       status,
     };
@@ -170,10 +177,44 @@ export default function TaskDetailPanel({ task, members, onClose, onUpdated, onD
     }
   }
 
+  async function handleSubmitComment(e: FormEvent) {
+    e.preventDefault();
+    if (!task) return;
+    const trimmed = commentText.trim();
+    if (trimmed.length === 0) return;
+    if (trimmed.length > COMMENT_MAX_LENGTH) {
+      setCommentError(`コメントは${COMMENT_MAX_LENGTH}文字以内で入力してください`);
+      return;
+    }
+    setCommentSubmitting(true);
+    setCommentError(null);
+    try {
+      await api.createComment(task.id, trimmed);
+      setCommentText("");
+      await loadActivities(task.id);
+    } catch (err) {
+      setCommentError(err instanceof ApiError ? err.message : "コメントの投稿に失敗しました");
+    } finally {
+      setCommentSubmitting(false);
+    }
+  }
+
+  async function handleDeleteActivity(activity: Activity) {
+    if (!task) return;
+    const label = activity.type === "comment" ? "このコメント" : "この履歴";
+    if (!window.confirm(`${label}を削除しますか？`)) return;
+    try {
+      await api.deleteActivity(activity.id);
+      await loadActivities(task.id);
+    } catch (err) {
+      setCommentError(err instanceof ApiError ? err.message : "削除に失敗しました");
+    }
+  }
+
   const tabs: { id: Tab; label: string }[] = [
     { id: "info", label: "基本情報" },
     { id: "steps", label: "工程" },
-    { id: "history", label: "履歴" },
+    { id: "history", label: "履歴・コメント" },
   ];
 
   return (
@@ -248,24 +289,12 @@ export default function TaskDetailPanel({ task, members, onClose, onUpdated, onD
                 />
               </div>
 
-              <div className="flex flex-col gap-1">
-                <label htmlFor="detail-assignee" className="text-sm font-medium text-slate-700">
-                  担当者
-                </label>
-                <select
-                  id="detail-assignee"
-                  value={assigneeId}
-                  onChange={(e) => setAssigneeId(e.target.value)}
-                  className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                >
-                  <option value="">未割当</option>
-                  {members.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              <AssigneePicker
+                members={members}
+                selectedIds={assigneeIds}
+                onChange={setAssigneeIds}
+                idPrefix="task-detail"
+              />
 
               <div className="grid grid-cols-2 gap-3">
                 <div className="flex flex-col gap-1">
@@ -340,19 +369,56 @@ export default function TaskDetailPanel({ task, members, onClose, onUpdated, onD
           ) : null}
 
           {tab === "history" ? (
-            activitiesLoading ? (
-              <p className="text-sm text-slate-500">読み込み中です...</p>
-            ) : activitiesError ? (
-              <p role="alert" className="text-sm text-red-600">
-                {activitiesError}
-              </p>
-            ) : (
-              <ActivityFeed
-                activities={activities}
-                membersById={membersById}
-                emptyTitle="このタスクの履歴はまだありません"
-              />
-            )
+            <div className="flex flex-col gap-4">
+              <form
+                onSubmit={handleSubmitComment}
+                className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3"
+              >
+                <label htmlFor="detail-comment" className="text-sm font-medium text-slate-700">
+                  メモ・コメントを追加
+                </label>
+                <textarea
+                  id="detail-comment"
+                  value={commentText}
+                  onChange={(e) => setCommentText(e.target.value)}
+                  rows={3}
+                  maxLength={COMMENT_MAX_LENGTH}
+                  placeholder="進捗メモや連絡事項を残せます"
+                  className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                />
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs text-slate-400">
+                    {commentText.length}/{COMMENT_MAX_LENGTH}
+                  </span>
+                  <button
+                    type="submit"
+                    disabled={commentSubmitting || commentText.trim().length === 0}
+                    className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {commentSubmitting ? "投稿中..." : "コメントを投稿"}
+                  </button>
+                </div>
+                {commentError ? (
+                  <p role="alert" className="text-sm text-red-600">
+                    {commentError}
+                  </p>
+                ) : null}
+              </form>
+
+              {activitiesLoading ? (
+                <p className="text-sm text-slate-500">読み込み中です...</p>
+              ) : activitiesError ? (
+                <p role="alert" className="text-sm text-red-600">
+                  {activitiesError}
+                </p>
+              ) : (
+                <ActivityFeed
+                  activities={activities}
+                  emptyTitle="このタスクの履歴・コメントはまだありません"
+                  onDelete={handleDeleteActivity}
+                />
+              )}
+            </div>
           ) : null}
         </div>
       </div>

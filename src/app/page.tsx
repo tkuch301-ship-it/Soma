@@ -1,20 +1,22 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { Member, ProjectWithStats } from "@/lib/repo";
+import type { Member, ProjectWithStats, TaskWithAssignee } from "@/lib/repo";
 import { api, ApiError, type ProjectInput } from "@/lib/api";
 import ActorSelector from "@/components/ActorSelector";
 import ProjectCard from "@/components/ProjectCard";
 import ProjectForm from "@/components/ProjectForm";
 import MemberPanel from "@/components/MemberPanel";
 import EmptyState from "@/components/EmptyState";
+import DeadlinePanel from "@/components/DeadlinePanel";
 
 export default function Home() {
   const router = useRouter();
 
   const [projects, setProjects] = useState<ProjectWithStats[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
+  const [allTasks, setAllTasks] = useState<TaskWithAssignee[]>([]);
 
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -30,15 +32,25 @@ export default function Home() {
   const refresh = useCallback(async () => {
     setLoadError(null);
     try {
-      const [projectsRes, membersRes] = await Promise.all([api.listProjects(), api.listMembers()]);
+      const [projectsRes, membersRes, tasksRes] = await Promise.all([
+        api.listProjects(),
+        api.listMembers(),
+        api.listTasks(),
+      ]);
       setProjects(projectsRes);
       setMembers(membersRes);
+      setAllTasks(tasksRes);
     } catch (err) {
       setLoadError(err instanceof ApiError ? err.message : "データの取得に失敗しました");
     } finally {
       setLoading(false);
     }
   }, []);
+
+  const projectNameById = useMemo(
+    () => new Map(projects.map((p) => [p.id, p.name])),
+    [projects]
+  );
 
   useEffect(() => {
     refresh();
@@ -214,6 +226,12 @@ export default function Home() {
           </div>
 
           <div className="flex flex-col gap-8">
+            <DeadlinePanel
+              tasks={allTasks}
+              projectNameById={projectNameById}
+              title="期限アラート（全プロジェクト）"
+            />
+
             <MemberPanel
               members={members}
               onAdd={handleAddMember}

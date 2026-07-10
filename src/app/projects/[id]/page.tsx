@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import type { Activity, Member, MemberStat, ProjectWithStats, TaskStatus, TaskWithAssignee } from "@/lib/repo";
@@ -12,7 +12,11 @@ import StatsPanel from "@/components/StatsPanel";
 import FilterBar from "@/components/FilterBar";
 import ActivityFeed from "@/components/ActivityFeed";
 import ProgressBar from "@/components/ProgressBar";
+import DeadlinePanel from "@/components/DeadlinePanel";
+import Toast from "@/components/Toast";
 import { useActor } from "@/lib/actor";
+import { buildDiscordSummary } from "@/lib/discordSummary";
+import { todayIsoDate } from "@/lib/date";
 
 export default function ProjectBoardPage() {
   const params = useParams<{ id: string }>();
@@ -21,9 +25,11 @@ export default function ProjectBoardPage() {
 
   const [project, setProject] = useState<ProjectWithStats | null>(null);
   const [tasks, setTasks] = useState<TaskWithAssignee[]>([]);
+  const [allTasks, setAllTasks] = useState<TaskWithAssignee[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
   const [stats, setStats] = useState<MemberStat[]>([]);
   const [activities, setActivities] = useState<Activity[]>([]);
+  const [toast, setToast] = useState<string | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -37,8 +43,6 @@ export default function ProjectBoardPage() {
 
   const [detailTask, setDetailTask] = useState<TaskWithAssignee | null>(null);
 
-  const membersById = useMemo(() => new Map(members.map((m) => [m.id, m.name])), [members]);
-
   const refresh = useCallback(
     async (assigneeFilter: "all" | number): Promise<TaskWithAssignee[] | undefined> => {
       if (!Number.isInteger(projectId) || projectId <= 0) {
@@ -48,9 +52,13 @@ export default function ProjectBoardPage() {
       }
       setLoadError(null);
       try {
-        const [projects, tasksRes, membersRes, statsRes, activitiesRes] = await Promise.all([
+        const [projects, tasksRes, allTasksRes, membersRes, statsRes, activitiesRes] = await Promise.all([
           api.listProjects(),
           api.listTasks(assigneeFilter === "all" ? { projectId } : { projectId, assigneeId: assigneeFilter }),
+          // Unfiltered project tasks (independent of the assignee filter above),
+          // used by the deadline panel and the Discord summary generator so
+          // both reflect the whole project regardless of the current filter.
+          api.listTasks({ projectId }),
           api.listMembers(),
           api.memberStats(projectId),
           api.listProjectActivities(projectId),
@@ -63,6 +71,7 @@ export default function ProjectBoardPage() {
         }
         setProject(found);
         setTasks(tasksRes);
+        setAllTasks(allTasksRes);
         setMembers(membersRes);
         setStats(statsRes);
         setActivities(activitiesRes);
@@ -82,6 +91,17 @@ export default function ProjectBoardPage() {
     // refresh identity depends on projectId; only filterAssigneeId changes here matter.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filterAssigneeId, projectId]);
+
+  async function handleDeleteActivity(activity: Activity) {
+    const label = activity.type === "comment" ? "このコメント" : "この履歴";
+    if (!window.confirm(`${label}を削除しますか？`)) return;
+    try {
+      await api.deleteActivity(activity.id);
+      await refresh(filterAssigneeId);
+    } catch (err) {
+      setLoadError(err instanceof ApiError ? err.message : "履歴の削除に失敗しました");
+    }
+  }
 
   async function handleStatusChange(id: number, status: TaskStatus) {
     try {
@@ -147,6 +167,18 @@ export default function ProjectBoardPage() {
   async function handleDetailDeleted() {
     setDetailTask(null);
     await refresh(filterAssigneeId);
+  }
+
+  async function handleCopyDiscordSummary() {
+    if (!project) return;
+    const summary = buildDiscordSummary(project.name, allTasks, todayIsoDate());
+    try {
+      await navigator.clipboard.writeText(summary);
+      setToast("Discord用まとめをコピーしました");
+    } catch {
+      setToast("コピーに失敗しました。ブラウザの権限を確認してください");
+    }
+    setTimeout(() => setToast(null), 3000);
   }
 
   if (notFound && !loading) {
@@ -220,14 +252,24 @@ export default function ProjectBoardPage() {
           <div className="flex flex-col gap-4 lg:col-span-2">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <FilterBar members={members} value={filterAssigneeId} onChange={setFilterAssigneeId} />
-              <button
-                type="button"
-                onClick={handleOpenCreateForm}
-                aria-label="タスクを追加"
-                className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
-              >
-                + タスクを追加
-              </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleCopyDiscordSummary}
+                  disabled={!project}
+                  className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  📋 Discord用まとめをコピー
+                </button>
+                <button
+                  type="button"
+                  onClick={handleOpenCreateForm}
+                  aria-label="タスクを追加"
+                  className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+                >
+                  + タスクを追加
+                </button>
+              </div>
             </div>
 
             <Board
@@ -239,6 +281,8 @@ export default function ProjectBoardPage() {
           </div>
 
           <div className="flex flex-col gap-8">
+            <DeadlinePanel tasks={allTasks} />
+
             <StatsPanel stats={stats} />
 
             <section aria-labelledby="activity-feed-title" className="flex flex-col gap-3">
@@ -247,8 +291,8 @@ export default function ProjectBoardPage() {
               </h2>
               <ActivityFeed
                 activities={activities}
-                membersById={membersById}
                 emptyTitle="このプロジェクトの動きはまだありません"
+                onDelete={handleDeleteActivity}
               />
             </section>
           </div>
@@ -272,6 +316,8 @@ export default function ProjectBoardPage() {
         onUpdated={handleDetailUpdated}
         onDeleted={handleDetailDeleted}
       />
+
+      <Toast message={toast} />
     </main>
   );
 }

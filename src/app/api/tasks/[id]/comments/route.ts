@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { listTaskActivities } from "@/lib/repo";
+import { createComment } from "@/lib/repo";
 import { handleApiError } from "@/lib/apiError";
 import { ValidationError } from "@/lib/errors";
 
@@ -13,14 +13,18 @@ function parseId(raw: string): number {
   return id;
 }
 
-export async function GET(
-  _req: NextRequest,
+export async function POST(
+  req: NextRequest,
   context: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id } = await context.params;
-    const activities = await listTaskActivities(parseId(id), 100);
-    return NextResponse.json(activities);
+    const body = await req.json().catch(() => ({}));
+    const comment = await createComment(parseId(id), body ?? {}, {
+      actor_id: body?.actor_id,
+      actor_name: body?.actor_name,
+    });
+    return NextResponse.json(comment, { status: 201 });
   } catch (err) {
     return handleApiError(err);
   }

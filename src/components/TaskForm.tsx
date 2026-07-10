@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useState } from "react";
 import type { Member, TaskStatus, TaskWithAssignee } from "@/lib/repo";
 import type { TaskInput } from "@/lib/api";
 import { STATUS_META, TASK_STATUSES } from "@/lib/statusMeta";
+import AssigneePicker from "@/components/AssigneePicker";
 
 interface TaskFormProps {
   open: boolean;
@@ -26,7 +27,7 @@ export default function TaskForm({
 }: TaskFormProps) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [assigneeId, setAssigneeId] = useState<string>("");
+  const [assigneeIds, setAssigneeIds] = useState<number[]>([]);
   const [dueDate, setDueDate] = useState("");
   const [status, setStatus] = useState<TaskStatus>("todo");
   const [titleError, setTitleError] = useState<string | null>(null);
@@ -35,7 +36,7 @@ export default function TaskForm({
     if (!open) return;
     setTitle(initialTask?.title ?? "");
     setDescription(initialTask?.description ?? "");
-    setAssigneeId(initialTask?.assignee_id ? String(initialTask.assignee_id) : "");
+    setAssigneeIds(initialTask?.assignees.map((a) => a.id) ?? []);
     setDueDate(initialTask?.due_date ?? "");
     setStatus(initialTask?.status ?? "todo");
     setTitleError(null);
@@ -57,7 +58,7 @@ export default function TaskForm({
     await onSubmit({
       title: trimmedTitle,
       description,
-      assignee_id: assigneeId === "" ? null : Number(assigneeId),
+      assignee_ids: assigneeIds,
       due_date: dueDate === "" ? null : dueDate,
       status,
     });
@@ -104,24 +105,12 @@ export default function TaskForm({
             />
           </div>
 
-          <div className="flex flex-col gap-1">
-            <label htmlFor="task-assignee" className="text-sm font-medium text-slate-700">
-              担当者
-            </label>
-            <select
-              id="task-assignee"
-              value={assigneeId}
-              onChange={(e) => setAssigneeId(e.target.value)}
-              className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-            >
-              <option value="">未割当</option>
-              {members.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.name}
-                </option>
-              ))}
-            </select>
-          </div>
+          <AssigneePicker
+            members={members}
+            selectedIds={assigneeIds}
+            onChange={setAssigneeIds}
+            idPrefix="task-form"
+          />
 
           <div className="grid grid-cols-2 gap-3">
             <div className="flex flex-col gap-1">

@@ -2,13 +2,18 @@ import { getSupabase } from "./supabase";
 import { mapPostgrestError } from "./apiError";
 import { ValidationError, NotFoundError, ConflictError } from "./errors";
 
-export type TaskStatus = "todo" | "doing" | "done";
+export type TaskStatus = "todo" | "doing" | "review" | "done";
 export type ProjectStatus = "active" | "archived";
 
 export interface Member {
   id: number;
   name: string;
   created_at: string;
+}
+
+export interface TaskAssignee {
+  id: number;
+  name: string;
 }
 
 export interface Project {
@@ -30,7 +35,6 @@ export interface Task {
   project_id: number;
   title: string;
   description: string;
-  assignee_id: number | null;
   status: TaskStatus;
   due_date: string | null;
   created_at: string;
@@ -38,7 +42,7 @@ export interface Task {
 }
 
 export interface TaskWithAssignee extends Task {
-  assignee_name: string | null;
+  assignees: TaskAssignee[];
   steps_total: number;
   steps_done: number;
 }
@@ -77,7 +81,7 @@ export interface ActorInput {
   actor_name?: unknown;
 }
 
-const TASK_STATUSES: TaskStatus[] = ["todo", "doing", "done"];
+const TASK_STATUSES: TaskStatus[] = ["todo", "doing", "review", "done"];
 const PROJECT_STATUSES: ProjectStatus[] = ["active", "archived"];
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -120,7 +124,8 @@ function normalizeDescription(description: unknown): string {
   return description;
 }
 
-function assertValidStatus(status: unknown): TaskStatus {
+/** Exported (in addition to being used internally) so it can be unit tested without a Supabase connection. */
+export function assertValidStatus(status: unknown): TaskStatus {
   if (typeof status !== "string" || !TASK_STATUSES.includes(status as TaskStatus)) {
     throw new ValidationError(`status must be one of: ${TASK_STATUSES.join(", ")}`);
   }
@@ -178,18 +183,58 @@ async function assertValidProjectId(projectId: unknown): Promise<number> {
   return id;
 }
 
-async function assertValidAssigneeId(assigneeId: unknown): Promise<number | null> {
-  if (assigneeId === undefined || assigneeId === null) {
-    return null;
+/**
+ * Validates the *shape* of the optional `assignee_ids` array accepted by
+ * create/update task inputs (array of positive integers, de-duplicated).
+ * Does not touch the database — split out from assertValidAssigneeIds so it
+ * can be unit tested without a Supabase connection. Returns [] when the
+ * field is omitted/null (callers interpret an empty array differently: "no
+ * assignees" on create, "leave unchanged" on update — see createTask/updateTask).
+ */
+export function parseAssigneeIdsShape(assigneeIds: unknown): number[] {
+  if (assigneeIds === undefined || assigneeIds === null) {
+    return [];
   }
-  const id = assertValidPositiveInt(assigneeId, "assignee_id");
+  if (!Array.isArray(assigneeIds)) {
+    throw new ValidationError("assignee_ids must be an array of positive integers");
+  }
+  const ids = assigneeIds.map((value) => assertValidPositiveInt(value, "assignee_ids"));
+  return Array.from(new Set(ids));
+}
+
+/**
+ * Validates the optional `assignee_ids` array accepted by create/update task
+ * inputs, then confirms every id references an existing member.
+ */
+async function assertValidAssigneeIds(assigneeIds: unknown): Promise<number[]> {
+  const uniqueIds = parseAssigneeIdsShape(assigneeIds);
+  if (uniqueIds.length === 0) {
+    return [];
+  }
+
   const supabase = getSupabase();
-  const { data, error } = await supabase.from("members").select("id").eq("id", id).maybeSingle();
-  if (error) throw mapPostgrestError(error, "failed to validate assignee_id");
-  if (!data) {
-    throw new ValidationError(`assignee_id ${id} does not reference an existing member`);
+  const { data, error } = await supabase.from("members").select("id").in("id", uniqueIds);
+  if (error) throw mapPostgrestError(error, "failed to validate assignee_ids");
+  const foundIds = new Set(((data ?? []) as { id: number }[]).map((m) => m.id));
+  const missing = uniqueIds.filter((id) => !foundIds.has(id));
+  if (missing.length > 0) {
+    throw new ValidationError(`assignee_ids ${missing.join(", ")} do not reference existing members`);
   }
-  return id;
+  return uniqueIds;
+}
+
+async function fetchMemberNames(ids: number[]): Promise<string[]> {
+  if (ids.length === 0) return [];
+  const supabase = getSupabase();
+  const { data, error } = await supabase.from("members").select("id, name").in("id", ids);
+  if (error) throw mapPostgrestError(error, "failed to load members");
+  const nameById = new Map(((data ?? []) as { id: number; name: string }[]).map((m) => [m.id, m.name]));
+  return ids.map((id) => nameById.get(id) ?? `#${id}`).sort((a, b) => a.localeCompare(b));
+}
+
+/** Exported so it can be unit tested without a Supabase connection. */
+export function assertValidCommentText(text: unknown): string {
+  return assertValidTextField(text, 1000, "text");
 }
 
 // ---------- Actor resolution + activity logging ----------
@@ -530,7 +575,7 @@ export interface CreateTaskInput {
   project_id: unknown;
   title: unknown;
   description?: unknown;
-  assignee_id?: unknown;
+  assignee_ids?: unknown;
   status?: unknown;
   due_date?: unknown;
 }
@@ -538,7 +583,7 @@ export interface CreateTaskInput {
 export interface UpdateTaskInput {
   title?: unknown;
   description?: unknown;
-  assignee_id?: unknown;
+  assignee_ids?: unknown;
   status?: unknown;
   due_date?: unknown;
 }
@@ -546,25 +591,38 @@ export interface UpdateTaskInput {
 async function attachTaskAggregates(tasks: Task[]): Promise<TaskWithAssignee[]> {
   if (tasks.length === 0) return [];
   const supabase = getSupabase();
-
-  const assigneeIds = Array.from(
-    new Set(tasks.map((t) => t.assignee_id).filter((id): id is number => id !== null))
-  );
   const taskIds = tasks.map((t) => t.id);
 
-  const [membersRes, stepsRes] = await Promise.all([
-    assigneeIds.length > 0
-      ? supabase.from("members").select("id, name").in("id", assigneeIds)
-      : Promise.resolve({ data: [] as { id: number; name: string }[], error: null }),
+  const [assigneeRowsRes, stepsRes] = await Promise.all([
+    supabase.from("task_assignees").select("task_id, member_id").in("task_id", taskIds),
     supabase.from("steps").select("task_id, done").in("task_id", taskIds),
   ]);
 
-  if (membersRes.error) throw mapPostgrestError(membersRes.error, "failed to load assignees");
+  if (assigneeRowsRes.error)
+    throw mapPostgrestError(assigneeRowsRes.error, "failed to load task assignees");
   if (stepsRes.error) throw mapPostgrestError(stepsRes.error, "failed to load steps");
+
+  const assigneeRows = (assigneeRowsRes.data ?? []) as { task_id: number; member_id: number }[];
+  const memberIds = Array.from(new Set(assigneeRows.map((r) => r.member_id)));
+  const membersRes =
+    memberIds.length > 0
+      ? await supabase.from("members").select("id, name").in("id", memberIds)
+      : { data: [] as { id: number; name: string }[], error: null };
+  if (membersRes.error) throw mapPostgrestError(membersRes.error, "failed to load assignees");
 
   const memberNameById = new Map<number, string>();
   for (const m of (membersRes.data ?? []) as { id: number; name: string }[]) {
     memberNameById.set(m.id, m.name);
+  }
+
+  const assigneesByTaskId = new Map<number, TaskAssignee[]>();
+  for (const row of assigneeRows) {
+    const list = assigneesByTaskId.get(row.task_id) ?? [];
+    list.push({ id: row.member_id, name: memberNameById.get(row.member_id) ?? "" });
+    assigneesByTaskId.set(row.task_id, list);
+  }
+  for (const list of assigneesByTaskId.values()) {
+    list.sort((a, b) => a.id - b.id);
   }
 
   const stepCounts = new Map<number, { total: number; done: number }>();
@@ -577,7 +635,7 @@ async function attachTaskAggregates(tasks: Task[]): Promise<TaskWithAssignee[]> 
 
   return tasks.map((t) => ({
     ...t,
-    assignee_name: t.assignee_id !== null ? memberNameById.get(t.assignee_id) ?? null : null,
+    assignees: assigneesByTaskId.get(t.id) ?? [],
     steps_total: stepCounts.get(t.id)?.total ?? 0,
     steps_done: stepCounts.get(t.id)?.done ?? 0,
   }));
@@ -585,16 +643,30 @@ async function attachTaskAggregates(tasks: Task[]): Promise<TaskWithAssignee[]> 
 
 export async function listTasks(filter: TaskFilter = {}): Promise<TaskWithAssignee[]> {
   const supabase = getSupabase();
+
+  // The assigneeId filter is backed by the task_assignees join table now, so
+  // resolve it to a set of matching task ids up front.
+  let assigneeTaskIds: number[] | undefined;
+  if (filter.assigneeId !== undefined) {
+    const { data, error } = await supabase
+      .from("task_assignees")
+      .select("task_id")
+      .eq("member_id", filter.assigneeId);
+    if (error) throw mapPostgrestError(error, "failed to filter tasks by assignee");
+    assigneeTaskIds = ((data ?? []) as { task_id: number }[]).map((r) => r.task_id);
+    if (assigneeTaskIds.length === 0) return [];
+  }
+
   let query = supabase.from("tasks").select("*").order("id", { ascending: true });
 
   if (filter.projectId !== undefined) {
     query = query.eq("project_id", filter.projectId);
   }
-  if (filter.assigneeId !== undefined) {
-    query = query.eq("assignee_id", filter.assigneeId);
-  }
   if (filter.status !== undefined) {
     query = query.eq("status", filter.status);
+  }
+  if (assigneeTaskIds !== undefined) {
+    query = query.in("id", assigneeTaskIds);
   }
 
   const { data, error } = await query;
@@ -618,7 +690,7 @@ export async function createTask(
   const projectId = await assertValidProjectId(input.project_id);
   const title = assertValidTitle(input.title);
   const description = normalizeDescription(input.description);
-  const assigneeId = await assertValidAssigneeId(input.assignee_id);
+  const assigneeIds = await assertValidAssigneeIds(input.assignee_ids);
   const status = input.status === undefined ? "todo" : assertValidStatus(input.status);
   const dueDate = assertValidDueDate(input.due_date);
   const resolvedActor = await resolveActor(actor.actor_id, actor.actor_name);
@@ -630,7 +702,6 @@ export async function createTask(
       project_id: projectId,
       title,
       description,
-      assignee_id: assigneeId,
       status,
       due_date: dueDate,
     })
@@ -638,6 +709,13 @@ export async function createTask(
     .single();
   if (error) throw mapPostgrestError(error, "failed to create task");
   const task = data as Task;
+
+  if (assigneeIds.length > 0) {
+    const { error: assignError } = await supabase
+      .from("task_assignees")
+      .insert(assigneeIds.map((member_id) => ({ task_id: task.id, member_id })));
+    if (assignError) throw mapPostgrestError(assignError, "failed to assign members to task");
+  }
 
   await logActivity({
     project_id: task.project_id,
@@ -668,15 +746,25 @@ export async function updateTask(
   }
   const existing = existingData as Task;
 
+  const { data: existingAssigneeRows, error: existingAssigneeError } = await supabase
+    .from("task_assignees")
+    .select("member_id")
+    .eq("task_id", id);
+  if (existingAssigneeError)
+    throw mapPostgrestError(existingAssigneeError, "failed to load task assignees");
+  const existingAssigneeIds = ((existingAssigneeRows ?? []) as { member_id: number }[]).map(
+    (r) => r.member_id
+  );
+
   const title = input.title === undefined ? existing.title : assertValidTitle(input.title);
   const description =
     input.description === undefined
       ? existing.description
       : normalizeDescription(input.description);
-  const assigneeId =
-    input.assignee_id === undefined
-      ? existing.assignee_id
-      : await assertValidAssigneeId(input.assignee_id);
+  const assigneeIdsProvided = input.assignee_ids !== undefined;
+  const newAssigneeIds = assigneeIdsProvided
+    ? await assertValidAssigneeIds(input.assignee_ids)
+    : existingAssigneeIds;
   const status = input.status === undefined ? existing.status : assertValidStatus(input.status);
   const dueDate =
     input.due_date === undefined ? existing.due_date : assertValidDueDate(input.due_date);
@@ -687,7 +775,6 @@ export async function updateTask(
     .update({
       title,
       description,
-      assignee_id: assigneeId,
       status,
       due_date: dueDate,
       updated_at: new Date().toISOString(),
@@ -698,16 +785,42 @@ export async function updateTask(
   if (error) throw mapPostgrestError(error, "failed to update task");
   const updated = data as Task;
 
+  if (assigneeIdsProvided) {
+    const { error: deleteError } = await supabase
+      .from("task_assignees")
+      .delete()
+      .eq("task_id", id);
+    if (deleteError) throw mapPostgrestError(deleteError, "failed to update task assignees");
+    if (newAssigneeIds.length > 0) {
+      const { error: insertError } = await supabase
+        .from("task_assignees")
+        .insert(newAssigneeIds.map((member_id) => ({ task_id: id, member_id })));
+      if (insertError) throw mapPostgrestError(insertError, "failed to update task assignees");
+    }
+  }
+
   const changedFields: Record<string, { before: unknown; after: unknown }> = {};
   if (title !== existing.title) changedFields.title = { before: existing.title, after: title };
   if (description !== existing.description)
     changedFields.description = { before: existing.description, after: description };
-  if (assigneeId !== existing.assignee_id)
-    changedFields.assignee_id = { before: existing.assignee_id, after: assigneeId };
   if (dueDate !== existing.due_date)
     changedFields.due_date = { before: existing.due_date, after: dueDate };
   const statusChanged = status !== existing.status;
   if (statusChanged) changedFields.status = { before: existing.status, after: status };
+
+  const beforeIdSet = new Set(existingAssigneeIds);
+  const afterIdSet = new Set(newAssigneeIds);
+  const assigneesChanged =
+    assigneeIdsProvided &&
+    (beforeIdSet.size !== afterIdSet.size ||
+      [...beforeIdSet].some((memberId) => !afterIdSet.has(memberId)));
+  if (assigneesChanged) {
+    const [beforeNames, afterNames] = await Promise.all([
+      fetchMemberNames(existingAssigneeIds),
+      fetchMemberNames(newAssigneeIds),
+    ]);
+    changedFields.assignees = { before: beforeNames, after: afterNames };
+  }
 
   if (Object.keys(changedFields).length > 0) {
     await logActivity({
@@ -763,7 +876,7 @@ export async function deleteTask(id: number, actor: ActorInput = {}): Promise<vo
   });
 }
 
-export async function listTaskActivities(taskId: number, limit = 50): Promise<Activity[]> {
+export async function listTaskActivities(taskId: number, limit = 100): Promise<Activity[]> {
   const supabase = getSupabase();
   const { data: task, error: taskError } = await supabase
     .from("tasks")
@@ -783,6 +896,51 @@ export async function listTaskActivities(taskId: number, limit = 50): Promise<Ac
     .limit(limit);
   if (error) throw mapPostgrestError(error, "failed to list activities");
   return (data ?? []) as Activity[];
+}
+
+// ---------- Comments ----------
+
+export interface CreateCommentInput {
+  text: unknown;
+}
+
+/** Comments/progress notes are stored as activities with type "comment" (no dedicated table). */
+export async function createComment(
+  taskId: number,
+  input: CreateCommentInput,
+  actor: ActorInput = {}
+): Promise<Activity> {
+  const projectId = await getTaskProjectId(taskId);
+  const text = assertValidCommentText(input.text);
+  const resolvedActor = await resolveActor(actor.actor_id, actor.actor_name);
+
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from("activities")
+    .insert({
+      project_id: projectId,
+      task_id: taskId,
+      actor_id: resolvedActor.actor_id,
+      actor_name: resolvedActor.actor_name,
+      type: "comment",
+      detail: { text },
+    })
+    .select("*")
+    .single();
+  if (error) throw mapPostgrestError(error, "failed to create comment");
+  return data as Activity;
+}
+
+export async function deleteActivity(id: number): Promise<void> {
+  const supabase = getSupabase();
+  const { data, error } = await supabase.from("activities").select("id").eq("id", id).maybeSingle();
+  if (error) throw mapPostgrestError(error, "failed to load activity");
+  if (!data) {
+    throw new NotFoundError(`activity ${id} not found`);
+  }
+
+  const { error: deleteError } = await supabase.from("activities").delete().eq("id", id);
+  if (deleteError) throw mapPostgrestError(deleteError, "failed to delete activity");
 }
 
 // ---------- Steps ----------
@@ -959,12 +1117,30 @@ export async function projectStats(projectId?: number): Promise<MemberStat[]> {
     }
   }
 
-  let taskQuery = supabase.from("tasks").select("assignee_id, status");
+  let taskQuery = supabase.from("tasks").select("id, status");
   if (projectId !== undefined) {
     taskQuery = taskQuery.eq("project_id", projectId);
   }
   const { data: taskRows, error: taskError } = await taskQuery;
   if (taskError) throw mapPostgrestError(taskError, "failed to load tasks for stats");
+
+  const tasks = (taskRows ?? []) as { id: number; status: TaskStatus }[];
+  const statusById = new Map(tasks.map((t) => [t.id, t.status]));
+
+  // A task counts toward *every* member assigned to it (a task with two
+  // assignees counts once in each of their totals).
+  let assigneeRows: { task_id: number; member_id: number }[] = [];
+  if (tasks.length > 0) {
+    const { data, error } = await supabase
+      .from("task_assignees")
+      .select("task_id, member_id")
+      .in(
+        "task_id",
+        tasks.map((t) => t.id)
+      );
+    if (error) throw mapPostgrestError(error, "failed to load task assignees for stats");
+    assigneeRows = (data ?? []) as { task_id: number; member_id: number }[];
+  }
 
   const { data: memberRows, error: memberError } = await supabase
     .from("members")
@@ -973,12 +1149,13 @@ export async function projectStats(projectId?: number): Promise<MemberStat[]> {
   if (memberError) throw mapPostgrestError(memberError, "failed to load members for stats");
 
   const counts = new Map<number, { total: number; done: number }>();
-  for (const row of (taskRows ?? []) as { assignee_id: number | null; status: TaskStatus }[]) {
-    if (row.assignee_id === null) continue;
-    const entry = counts.get(row.assignee_id) ?? { total: 0, done: 0 };
+  for (const row of assigneeRows) {
+    const status = statusById.get(row.task_id);
+    if (status === undefined) continue;
+    const entry = counts.get(row.member_id) ?? { total: 0, done: 0 };
     entry.total += 1;
-    if (row.status === "done") entry.done += 1;
-    counts.set(row.assignee_id, entry);
+    if (status === "done") entry.done += 1;
+    counts.set(row.member_id, entry);
   }
 
   return ((memberRows ?? []) as { id: number; name: string }[]).map((m) => ({

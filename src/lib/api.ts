@@ -81,7 +81,7 @@ export interface TaskInput {
   project_id?: number;
   title: string;
   description?: string;
-  assignee_id?: number | null;
+  assignee_ids?: number[];
   status?: TaskStatus;
   due_date?: string | null;
 }
@@ -156,6 +156,14 @@ export const api = {
   },
   listTaskActivities(id: number): Promise<Activity[]> {
     return request<Activity[]>(`/api/tasks/${id}/activities`);
+  },
+
+  // ---------- Comments ----------
+  createComment(taskId: number, text: string): Promise<Activity> {
+    return postJson<Activity>(`/api/tasks/${taskId}/comments`, { text });
+  },
+  deleteActivity(id: number): Promise<void> {
+    return del(`/api/activities/${id}`);
   },
 
   // ---------- Steps ----------
