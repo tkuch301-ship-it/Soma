@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { ValidationError, NotFoundError, ConflictError } from "./errors";
+import { ValidationError, NotFoundError, ConflictError, ForbiddenError } from "./errors";
 
 export function handleApiError(err: unknown): NextResponse {
   if (err instanceof ValidationError) {
@@ -10,6 +10,9 @@ export function handleApiError(err: unknown): NextResponse {
   }
   if (err instanceof ConflictError) {
     return NextResponse.json({ error: err.message }, { status: 409 });
+  }
+  if (err instanceof ForbiddenError) {
+    return NextResponse.json({ error: "管理者のみ操作できます" }, { status: 403 });
   }
   console.error(err);
   const message = err instanceof Error ? err.message : "Internal Server Error";

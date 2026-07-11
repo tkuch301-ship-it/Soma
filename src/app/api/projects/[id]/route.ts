@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getProjectById, updateProject, deleteProject } from "@/lib/repo";
 import { handleApiError } from "@/lib/apiError";
 import { NotFoundError, ValidationError } from "@/lib/errors";
+import { requireAdmin } from "@/lib/adminAuth";
 
 export const runtime = "nodejs";
 
@@ -34,6 +35,7 @@ export async function PATCH(
   context: { params: Promise<{ id: string }> }
 ) {
   try {
+    requireAdmin(req);
     const { id } = await context.params;
     const body = await req.json().catch(() => ({}));
     const project = await updateProject(parseId(id), body ?? {}, {
@@ -51,6 +53,7 @@ export async function DELETE(
   context: { params: Promise<{ id: string }> }
 ) {
   try {
+    requireAdmin(req);
     const { id } = await context.params;
     const body = await req.json().catch(() => ({}));
     await deleteProject(parseId(id), {

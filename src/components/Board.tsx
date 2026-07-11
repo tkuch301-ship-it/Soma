@@ -7,12 +7,14 @@ import EmptyState from "@/components/EmptyState";
 
 interface BoardProps {
   tasks: TaskWithAssignee[];
+  /** タスクのステータス変更・削除は管理者のみ操作できるため、非管理者にはロック表示する。 */
+  admin: boolean;
   onStatusChange: (id: number, status: TaskStatus) => void;
   onOpenDetail: (task: TaskWithAssignee) => void;
   onDelete: (task: TaskWithAssignee) => void;
 }
 
-export default function Board({ tasks, onStatusChange, onOpenDetail, onDelete }: BoardProps) {
+export default function Board({ tasks, admin, onStatusChange, onOpenDetail, onDelete }: BoardProps) {
   if (tasks.length === 0) {
     return (
       <EmptyState
@@ -46,6 +48,7 @@ export default function Board({ tasks, onStatusChange, onOpenDetail, onDelete }:
                   <TaskCard
                     key={task.id}
                     task={task}
+                    admin={admin}
                     onStatusChange={onStatusChange}
                     onOpenDetail={onOpenDetail}
                     onDelete={onDelete}
