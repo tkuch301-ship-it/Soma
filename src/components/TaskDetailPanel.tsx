@@ -17,12 +17,21 @@ type Tab = "info" | "steps" | "history";
 interface TaskDetailPanelProps {
   task: TaskWithAssignee | null;
   members: Member[];
+  /** タスクの基本情報の編集・削除は管理者のみ操作できるため、非管理者にはロック表示する。 */
+  admin: boolean;
   onClose: () => void;
   onUpdated: () => void;
   onDeleted: () => void;
 }
 
-export default function TaskDetailPanel({ task, members, onClose, onUpdated, onDeleted }: TaskDetailPanelProps) {
+export default function TaskDetailPanel({
+  task,
+  members,
+  admin,
+  onClose,
+  onUpdated,
+  onDeleted,
+}: TaskDetailPanelProps) {
   const [tab, setTab] = useState<Tab>("info");
 
   const [title, setTitle] = useState("");
@@ -116,7 +125,7 @@ export default function TaskDetailPanel({ task, members, onClose, onUpdated, onD
 
   async function handleSaveInfo(e: FormEvent) {
     e.preventDefault();
-    if (!task) return;
+    if (!task || !admin) return;
     const trimmedTitle = title.trim();
     if (trimmedTitle.length === 0) {
       setInfoError("タイトルを入力してください");
@@ -143,7 +152,7 @@ export default function TaskDetailPanel({ task, members, onClose, onUpdated, onD
   }
 
   async function handleDeleteTask() {
-    if (!task) return;
+    if (!task || !admin) return;
     if (!window.confirm(`「${task.title}」を削除しますか？この操作は取り消せません。`)) return;
     try {
       await api.deleteTask(task.id);
@@ -279,6 +288,12 @@ export default function TaskDetailPanel({ task, members, onClose, onUpdated, onD
         <div className="mt-4 flex-1">
           {tab === "info" ? (
             <form onSubmit={handleSaveInfo} className="flex flex-col gap-4">
+              {!admin ? (
+                <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
+                  🔒 編集は管理者のみ
+                </p>
+              ) : null}
+
               <div className="flex flex-col gap-1">
                 <label htmlFor="detail-title" className="text-sm font-medium text-slate-700">
                   タイトル <span className="text-red-600">*</span>
@@ -289,7 +304,9 @@ export default function TaskDetailPanel({ task, members, onClose, onUpdated, onD
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
                   required
-                  className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  disabled={!admin}
+                  title={!admin ? "管理者のみ変更できます" : undefined}
+                  className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
                 />
               </div>
 
@@ -302,7 +319,9 @@ export default function TaskDetailPanel({ task, members, onClose, onUpdated, onD
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   rows={3}
-                  className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  disabled={!admin}
+                  title={!admin ? "管理者のみ変更できます" : undefined}
+                  className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
                 />
               </div>
 
@@ -311,6 +330,7 @@ export default function TaskDetailPanel({ task, members, onClose, onUpdated, onD
                 selectedIds={assigneeIds}
                 onChange={setAssigneeIds}
                 idPrefix="task-detail"
+                disabled={!admin}
               />
 
               <div className="grid grid-cols-2 gap-3">
@@ -323,7 +343,9 @@ export default function TaskDetailPanel({ task, members, onClose, onUpdated, onD
                     type="date"
                     value={dueDate}
                     onChange={(e) => setDueDate(e.target.value)}
-                    className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    disabled={!admin}
+                    title={!admin ? "管理者のみ変更できます" : undefined}
+                    className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
                   />
                 </div>
                 <div className="flex flex-col gap-1">
@@ -334,7 +356,9 @@ export default function TaskDetailPanel({ task, members, onClose, onUpdated, onD
                     id="detail-status"
                     value={status}
                     onChange={(e) => setStatus(e.target.value as TaskStatus)}
-                    className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    disabled={!admin}
+                    title={!admin ? "管理者のみ変更できます" : undefined}
+                    className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
                   >
                     {TASK_STATUSES.map((s) => (
                       <option key={s} value={s}>
@@ -352,16 +376,21 @@ export default function TaskDetailPanel({ task, members, onClose, onUpdated, onD
               ) : null}
 
               <div className="mt-1 flex items-center justify-between gap-2">
-                <button
-                  type="button"
-                  onClick={handleDeleteTask}
-                  className="rounded-md px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50"
-                >
-                  タスクを削除
-                </button>
+                {admin ? (
+                  <button
+                    type="button"
+                    onClick={handleDeleteTask}
+                    className="rounded-md px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50"
+                  >
+                    タスクを削除
+                  </button>
+                ) : (
+                  <span />
+                )}
                 <button
                   type="submit"
-                  disabled={infoSaving}
+                  disabled={!admin || infoSaving}
+                  title={!admin ? "管理者のみ変更できます" : undefined}
                   className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {infoSaving ? "保存中..." : "保存する"}

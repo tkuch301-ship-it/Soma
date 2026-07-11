@@ -10,12 +10,15 @@ import ProjectForm from "@/components/ProjectForm";
 import MemberPanel from "@/components/MemberPanel";
 import EmptyState from "@/components/EmptyState";
 import DeadlinePanel from "@/components/DeadlinePanel";
+import AdminBar from "@/components/AdminBar";
+import { useAdmin } from "@/lib/useAdmin";
 import { useAutoRefresh } from "@/lib/useAutoRefresh";
 
 const AUTO_REFRESH_INTERVAL_MS = 15000;
 
 export default function Home() {
   const router = useRouter();
+  const { admin, loginModalOpen } = useAdmin();
 
   const [projects, setProjects] = useState<ProjectWithStats[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
@@ -65,11 +68,12 @@ export default function Home() {
     refresh();
   }, [refresh]);
 
-  // プロジェクト作成/編集フォームが開いている間は、入力内容が巻き戻らないよう
-  // 自動更新を止める。それ以外は15秒ごとにサイレント更新（スピナーなし）。
+  // プロジェクト作成/編集フォームや管理者ログインモーダルが開いている間は、
+  // 入力内容が巻き戻らないよう自動更新を止める。それ以外は15秒ごとにサイレント更新
+  // （スピナーなし）。
   useAutoRefresh(() => refresh({ silent: true }), {
     intervalMs: AUTO_REFRESH_INTERVAL_MS,
-    enabled: !formOpen,
+    enabled: !formOpen && !loginModalOpen,
   });
 
   function handleOpenProject(project: ProjectWithStats) {
@@ -192,7 +196,10 @@ export default function Home() {
             サークルのプロジェクト・タスク・工程の進捗を管理・共有するボードです。
           </p>
         </div>
-        <ActorSelector members={members} />
+        <div className="flex flex-wrap items-center gap-2">
+          <ActorSelector members={members} />
+          <AdminBar />
+        </div>
       </header>
 
       {loading ? (
@@ -239,6 +246,7 @@ export default function Home() {
                   <ProjectCard
                     key={project.id}
                     project={project}
+                    admin={admin}
                     onOpen={handleOpenProject}
                     onEdit={handleOpenEditForm}
                     onDelete={handleDeleteProject}
@@ -258,6 +266,7 @@ export default function Home() {
 
             <MemberPanel
               members={members}
+              admin={admin}
               onAdd={handleAddMember}
               onDelete={handleDeleteMember}
               error={memberError}

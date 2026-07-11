@@ -9,6 +9,8 @@ interface AssigneePickerProps {
   /** Unique prefix so checkbox ids don't collide when the picker is rendered more than once on a page. */
   idPrefix: string;
   label?: string;
+  /** When true, renders the chips greyed out and non-interactive (e.g. for non-admin viewers). */
+  disabled?: boolean;
 }
 
 /**
@@ -22,10 +24,12 @@ export default function AssigneePicker({
   onChange,
   idPrefix,
   label = "担当者",
+  disabled = false,
 }: AssigneePickerProps) {
   const selectedSet = new Set(selectedIds);
 
   function toggle(id: number) {
+    if (disabled) return;
     if (selectedSet.has(id)) {
       onChange(selectedIds.filter((v) => v !== id));
     } else {
@@ -50,10 +54,13 @@ export default function AssigneePicker({
               <label
                 key={m.id}
                 htmlFor={inputId}
-                className={`flex cursor-pointer items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-medium transition-colors ${
+                title={disabled ? "管理者のみ変更できます" : undefined}
+                className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-medium transition-colors ${
+                  disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer"
+                } ${
                   checked
                     ? "border-indigo-600 bg-indigo-600 text-white"
-                    : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                    : `border-slate-300 bg-white text-slate-700 ${disabled ? "" : "hover:bg-slate-50"}`
                 }`}
               >
                 <input
@@ -61,6 +68,7 @@ export default function AssigneePicker({
                   type="checkbox"
                   checked={checked}
                   onChange={() => toggle(m.id)}
+                  disabled={disabled}
                   className="sr-only"
                 />
                 {m.name}

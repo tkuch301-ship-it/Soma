@@ -185,4 +185,46 @@ export const api = {
     const qs = projectId !== undefined ? `?projectId=${projectId}` : "";
     return request<MemberStat[]>(`/api/stats${qs}`);
   },
+
+  // ---------- Admin ----------
+  adminSession(): Promise<{ admin: boolean }> {
+    return request<{ admin: boolean }>("/api/admin/session");
+  },
+  /**
+   * Doesn't reuse the generic `request` helper: the 401 ("パスワードが違います")
+   * and 503 (ADMIN_PASSWORD unset) responses both need distinct, friendly
+   * Japanese messages surfaced to the login form rather than a thrown error.
+   */
+  async adminLogin(password: string): Promise<{ ok: true } | { ok: false; message: string }> {
+    let res: Response;
+    try {
+      res = await fetch("/api/admin/login", {
+        method: "POST",
+        headers: jsonHeaders,
+        body: JSON.stringify({ password }),
+      });
+    } catch {
+      return { ok: false, message: "サーバーに接続できませんでした。ネットワークを確認してください。" };
+    }
+    if (res.ok) return { ok: true };
+    if (res.status === 503) {
+      return {
+        ok: false,
+        message: "管理者パスワードが未設定です(Vercelの環境変数 ADMIN_PASSWORD を設定してください)",
+      };
+    }
+    const data = await res.json().catch(() => null);
+    const message =
+      data && typeof data === "object" && "error" in data && typeof data.error === "string"
+        ? data.error
+        : `リクエストに失敗しました (${res.status})`;
+    return { ok: false, message };
+  },
+  adminLogout(): Promise<{ admin: boolean }> {
+    return request<{ admin: boolean }>("/api/admin/logout", {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({}),
+    });
+  },
 };
