@@ -46,6 +46,9 @@ export async function GET(req: NextRequest) {
   }
 }
 
+// Intentionally NOT admin-gated: anyone can create a task (including with an
+// initial assignee/due date via body.assignee_ids/due_date). Only *editing*
+// or *deleting* existing tasks (PATCH/DELETE /api/tasks/[id]) requires admin.
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));

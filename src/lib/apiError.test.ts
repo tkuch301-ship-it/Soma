@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { handleApiError, mapPostgrestError } from "./apiError";
-import { ValidationError, NotFoundError, ConflictError } from "./errors";
+import { ValidationError, NotFoundError, ConflictError, ForbiddenError } from "./errors";
 
 describe("handleApiError", () => {
   it("maps ValidationError to 400", async () => {
@@ -19,6 +19,12 @@ describe("handleApiError", () => {
     const res = handleApiError(new ConflictError("duplicate"));
     expect(res.status).toBe(409);
     await expect(res.json()).resolves.toEqual({ error: "duplicate" });
+  });
+
+  it("maps ForbiddenError to 403 with a fixed Japanese message", async () => {
+    const res = handleApiError(new ForbiddenError("anything"));
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toEqual({ error: "管理者のみ操作できます" });
   });
 
   describe("unexpected errors", () => {

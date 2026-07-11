@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { updateTask, deleteTask } from "@/lib/repo";
 import { handleApiError } from "@/lib/apiError";
 import { ValidationError } from "@/lib/errors";
+import { requireAdmin } from "@/lib/adminAuth";
 
 export const runtime = "nodejs";
 
@@ -18,6 +19,7 @@ export async function PATCH(
   context: { params: Promise<{ id: string }> }
 ) {
   try {
+    requireAdmin(req);
     const { id } = await context.params;
     const body = await req.json().catch(() => ({}));
     const task = await updateTask(parseId(id), body ?? {}, {
@@ -35,6 +37,7 @@ export async function DELETE(
   context: { params: Promise<{ id: string }> }
 ) {
   try {
+    requireAdmin(req);
     const { id } = await context.params;
     const body = await req.json().catch(() => ({}));
     await deleteTask(parseId(id), {
