@@ -17,6 +17,9 @@ import Toast from "@/components/Toast";
 import { useActor } from "@/lib/actor";
 import { buildDiscordSummary } from "@/lib/discordSummary";
 import { todayIsoDate } from "@/lib/date";
+import { useAutoRefresh } from "@/lib/useAutoRefresh";
+
+const AUTO_REFRESH_INTERVAL_MS = 15000;
 
 export default function ProjectBoardPage() {
   const params = useParams<{ id: string }>();
@@ -44,12 +47,17 @@ export default function ProjectBoardPage() {
   const [detailTask, setDetailTask] = useState<TaskWithAssignee | null>(null);
 
   const refresh = useCallback(
-    async (assigneeFilter: "all" | number): Promise<TaskWithAssignee[] | undefined> => {
+    async (
+      assigneeFilter: "all" | number,
+      options?: { silent?: boolean }
+    ): Promise<TaskWithAssignee[] | undefined> => {
+      const silent = options?.silent ?? false;
       if (!Number.isInteger(projectId) || projectId <= 0) {
         setNotFound(true);
         setLoading(false);
         return undefined;
       }
+      if (!silent) setLoading(true);
       setLoadError(null);
       try {
         const [projects, tasksRes, allTasksRes, membersRes, statsRes, activitiesRes] = await Promise.all([
@@ -77,7 +85,11 @@ export default function ProjectBoardPage() {
         setActivities(activitiesRes);
         return tasksRes;
       } catch (err) {
-        setLoadError(err instanceof ApiError ? err.message : "データの取得に失敗しました");
+        // Silent (background poll) failures don't surface an error banner;
+        // the next successful poll recovers automatically.
+        if (!silent) {
+          setLoadError(err instanceof ApiError ? err.message : "データの取得に失敗しました");
+        }
         return undefined;
       } finally {
         setLoading(false);
@@ -91,6 +103,13 @@ export default function ProjectBoardPage() {
     // refresh identity depends on projectId; only filterAssigneeId changes here matter.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filterAssigneeId, projectId]);
+
+  // タスク作成フォームやタスク詳細パネルが開いている間は、編集内容や開いている
+  // タブが巻き戻らないよう自動更新を止める。それ以外は15秒ごとにサイレント更新。
+  useAutoRefresh(() => refresh(filterAssigneeId, { silent: true }), {
+    intervalMs: AUTO_REFRESH_INTERVAL_MS,
+    enabled: !formOpen && !detailTask,
+  });
 
   async function handleDeleteActivity(activity: Activity) {
     const label = activity.type === "comment" ? "このコメント" : "この履歴";
@@ -197,9 +216,20 @@ export default function ProjectBoardPage() {
   return (
     <main className="mx-auto flex min-h-screen max-w-6xl flex-col gap-6 p-4 sm:p-6">
       <div className="flex flex-col gap-3">
-        <Link href="/" className="text-sm font-medium text-indigo-600 hover:underline">
-          ← プロジェクト一覧
-        </Link>
+        <div className="flex items-center justify-between gap-2">
+          <Link href="/" className="text-sm font-medium text-indigo-600 hover:underline">
+            ← プロジェクト一覧
+          </Link>
+          <button
+            type="button"
+            onClick={() => refresh(filterAssigneeId)}
+            aria-label="今すぐ更新"
+            title="今すぐ更新"
+            className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+          >
+            ↻ 更新
+          </button>
+        </div>
         {project ? (
           <div className="flex flex-col gap-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -238,10 +268,7 @@ export default function ProjectBoardPage() {
           <p>{loadError}</p>
           <button
             type="button"
-            onClick={() => {
-              setLoading(true);
-              refresh(filterAssigneeId);
-            }}
+            onClick={() => refresh(filterAssigneeId)}
             className="rounded-md border border-red-300 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-100"
           >
             再読み込み
