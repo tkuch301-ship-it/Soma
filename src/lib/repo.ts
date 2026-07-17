@@ -172,17 +172,6 @@ function assertValidPosition(position: unknown): number {
   return num;
 }
 
-async function assertValidProjectId(projectId: unknown): Promise<number> {
-  const id = assertValidPositiveInt(projectId, "project_id");
-  const supabase = getSupabase();
-  const { data, error } = await supabase.from("projects").select("id").eq("id", id).maybeSingle();
-  if (error) throw mapPostgrestError(error, "failed to validate project_id");
-  if (!data) {
-    throw new ValidationError(`project_id ${id} does not reference an existing project`);
-  }
-  return id;
-}
-
 /**
  * Validates the *shape* of the optional `assignee_ids` array accepted by
  * create/update task inputs (array of positive integers, de-duplicated).
@@ -221,15 +210,6 @@ async function assertValidAssigneeIds(assigneeIds: unknown): Promise<number[]> {
     throw new ValidationError(`assignee_ids ${missing.join(", ")} do not reference existing members`);
   }
   return uniqueIds;
-}
-
-async function fetchMemberNames(ids: number[]): Promise<string[]> {
-  if (ids.length === 0) return [];
-  const supabase = getSupabase();
-  const { data, error } = await supabase.from("members").select("id, name").in("id", ids);
-  if (error) throw mapPostgrestError(error, "failed to load members");
-  const nameById = new Map(((data ?? []) as { id: number; name: string }[]).map((m) => [m.id, m.name]));
-  return ids.map((id) => nameById.get(id) ?? `#${id}`).sort((a, b) => a.localeCompare(b));
 }
 
 /** Exported so it can be unit tested without a Supabase connection. */
@@ -281,21 +261,39 @@ interface LogActivityParams {
   actor_name: string | null;
 }
 
-async function logActivity(params: LogActivityParams): Promise<void> {
+/**
+ * Inserts one or more activity rows in a single round trip. Used instead of
+ * N calls to logActivity() when a single mutation produces multiple history
+ * entries (e.g. updateTask can emit both "task_updated" and
+ * "task_status_changed" for one PATCH request).
+ */
+async function logActivities(paramsList: LogActivityParams[]): Promise<void> {
+  if (paramsList.length === 0) return;
   const supabase = getSupabase();
-  const { error } = await supabase.from("activities").insert({
-    project_id: params.project_id,
-    task_id: params.task_id ?? null,
-    actor_id: params.actor_id,
-    actor_name: params.actor_name,
-    type: params.type,
-    detail: params.detail ?? {},
-  });
+  const { error } = await supabase.from("activities").insert(
+    paramsList.map((params) => ({
+      project_id: params.project_id,
+      task_id: params.task_id ?? null,
+      actor_id: params.actor_id,
+      actor_name: params.actor_name,
+      type: params.type,
+      detail: params.detail ?? {},
+    }))
+  );
   if (error) {
     // A history-logging failure shouldn't take down an otherwise-successful
     // mutation; surface it in server logs instead.
-    console.error(`Failed to record activity "${params.type}":`, error);
+    console.error(
+      `Failed to record activit${paramsList.length === 1 ? "y" : "ies"} (${paramsList
+        .map((p) => p.type)
+        .join(", ")}):`,
+      error
+    );
   }
+}
+
+async function logActivity(params: LogActivityParams): Promise<void> {
+  await logActivities([params]);
 }
 
 // ---------- Members ----------
@@ -341,21 +339,21 @@ export async function createMember(name: unknown, actor: ActorInput = {}): Promi
 
 export async function deleteMember(id: number, actor: ActorInput = {}): Promise<void> {
   const supabase = getSupabase();
-  const { data: existingData, error: fetchError } = await supabase
-    .from("members")
-    .select("*")
-    .eq("id", id)
-    .maybeSingle();
-  if (fetchError) throw mapPostgrestError(fetchError, "failed to load member");
-  if (!existingData) {
-    throw new NotFoundError(`member ${id} not found`);
-  }
-  const existing = existingData as Member;
-
   const resolvedActor = await resolveActor(actor.actor_id, actor.actor_name);
 
-  const { error } = await supabase.from("members").delete().eq("id", id);
+  // delete().select() returns the deleted row (or none) in the same round
+  // trip, so a separate existence pre-check is unnecessary.
+  const { data, error } = await supabase
+    .from("members")
+    .delete()
+    .eq("id", id)
+    .select("*")
+    .maybeSingle();
   if (error) throw mapPostgrestError(error, "failed to delete member");
+  if (!data) {
+    throw new NotFoundError(`member ${id} not found`);
+  }
+  const existing = data as Member;
 
   await logActivity({
     project_id: null,
@@ -382,38 +380,29 @@ export interface UpdateProjectInput {
   due_date?: unknown;
 }
 
+interface ProjectWithTasksRow extends Project {
+  tasks: { status: TaskStatus }[] | null;
+}
+
 export async function listProjects(): Promise<ProjectWithStats[]> {
   const supabase = getSupabase();
+  // Resource embedding (select=*,tasks(status)) pulls each project's task
+  // statuses in the same round trip instead of a second query afterward.
   const { data, error } = await supabase
     .from("projects")
-    .select("*")
+    .select("*, tasks(status)")
     .order("id", { ascending: true });
   if (error) throw mapPostgrestError(error, "failed to list projects");
-  const projects = (data ?? []) as Project[];
-  if (projects.length === 0) return [];
 
-  const { data: taskRows, error: taskError } = await supabase
-    .from("tasks")
-    .select("project_id, status")
-    .in(
-      "project_id",
-      projects.map((p) => p.id)
-    );
-  if (taskError) throw mapPostgrestError(taskError, "failed to load task stats");
-
-  const counts = new Map<number, { total: number; done: number }>();
-  for (const row of (taskRows ?? []) as { project_id: number; status: TaskStatus }[]) {
-    const entry = counts.get(row.project_id) ?? { total: 0, done: 0 };
-    entry.total += 1;
-    if (row.status === "done") entry.done += 1;
-    counts.set(row.project_id, entry);
-  }
-
-  return projects.map((p) => ({
-    ...p,
-    tasks_total: counts.get(p.id)?.total ?? 0,
-    tasks_done: counts.get(p.id)?.done ?? 0,
-  }));
+  return ((data ?? []) as ProjectWithTasksRow[]).map((row) => {
+    const { tasks, ...project } = row;
+    const list = tasks ?? [];
+    return {
+      ...(project as Project),
+      tasks_total: list.length,
+      tasks_done: list.filter((t) => t.status === "done").length,
+    };
+  });
 }
 
 export async function getProjectById(id: number): Promise<Project | undefined> {
@@ -459,6 +448,9 @@ export async function updateProject(
   actor: ActorInput = {}
 ): Promise<Project> {
   const supabase = getSupabase();
+  // This fetch isn't just an existence check: PATCH is partial, so we need
+  // the current values to fill in any omitted fields and to diff for the
+  // activity log. It can't be folded into the update() call below.
   const { data: existingData, error: fetchError } = await supabase
     .from("projects")
     .select("*")
@@ -514,20 +506,19 @@ export async function updateProject(
 
 export async function deleteProject(id: number, actor: ActorInput = {}): Promise<void> {
   const supabase = getSupabase();
-  const { data: existingData, error: fetchError } = await supabase
-    .from("projects")
-    .select("*")
-    .eq("id", id)
-    .maybeSingle();
-  if (fetchError) throw mapPostgrestError(fetchError, "failed to load project");
-  if (!existingData) {
-    throw new NotFoundError(`project ${id} not found`);
-  }
-  const existing = existingData as Project;
   const resolvedActor = await resolveActor(actor.actor_id, actor.actor_name);
 
-  const { error } = await supabase.from("projects").delete().eq("id", id);
+  const { data, error } = await supabase
+    .from("projects")
+    .delete()
+    .eq("id", id)
+    .select("*")
+    .maybeSingle();
   if (error) throw mapPostgrestError(error, "failed to delete project");
+  if (!data) {
+    throw new NotFoundError(`project ${id} not found`);
+  }
+  const existing = data as Project;
 
   // project_id is deliberately left null: activities.project_id is
   // ON DELETE CASCADE, so a row referencing the just-deleted project would
@@ -543,24 +534,20 @@ export async function deleteProject(id: number, actor: ActorInput = {}): Promise
 
 export async function listActivities(projectId: number, limit = 50): Promise<Activity[]> {
   const supabase = getSupabase();
-  const { data: project, error: projectError } = await supabase
+  // Embed activities under their parent project so the existence check and
+  // the activity list come back in a single round trip.
+  const { data, error } = await supabase
     .from("projects")
-    .select("id")
+    .select("id, activities(*)")
     .eq("id", projectId)
+    .order("created_at", { ascending: false, referencedTable: "activities" })
+    .limit(limit, { referencedTable: "activities" })
     .maybeSingle();
-  if (projectError) throw mapPostgrestError(projectError, "failed to load project");
-  if (!project) {
+  if (error) throw mapPostgrestError(error, "failed to load project");
+  if (!data) {
     throw new NotFoundError(`project ${projectId} not found`);
   }
-
-  const { data, error } = await supabase
-    .from("activities")
-    .select("*")
-    .eq("project_id", projectId)
-    .order("created_at", { ascending: false })
-    .limit(limit);
-  if (error) throw mapPostgrestError(error, "failed to list activities");
-  return (data ?? []) as Activity[];
+  return ((data as { activities: Activity[] | null }).activities ?? []) as Activity[];
 }
 
 // ---------- Tasks ----------
@@ -588,57 +575,39 @@ export interface UpdateTaskInput {
   due_date?: unknown;
 }
 
-async function attachTaskAggregates(tasks: Task[]): Promise<TaskWithAssignee[]> {
-  if (tasks.length === 0) return [];
-  const supabase = getSupabase();
-  const taskIds = tasks.map((t) => t.id);
+/** Shared "select" fragment used to fetch a task with its assignees + step aggregates embedded in one round trip. */
+const TASK_WITH_AGGREGATES_SELECT =
+  "*, task_assignees(member:members(id,name)), steps(done)";
 
-  const [assigneeRowsRes, stepsRes] = await Promise.all([
-    supabase.from("task_assignees").select("task_id, member_id").in("task_id", taskIds),
-    supabase.from("steps").select("task_id, done").in("task_id", taskIds),
-  ]);
+interface TaskAggregateEmbeds {
+  task_assignees?: { member: TaskAssignee | null }[] | null;
+  steps?: { done: boolean }[] | null;
+}
 
-  if (assigneeRowsRes.error)
-    throw mapPostgrestError(assigneeRowsRes.error, "failed to load task assignees");
-  if (stepsRes.error) throw mapPostgrestError(stepsRes.error, "failed to load steps");
+function extractAssignees(embeds: TaskAggregateEmbeds): TaskAssignee[] {
+  return ((embeds.task_assignees ?? []) as { member: TaskAssignee | null }[])
+    .map((row) => row.member)
+    .filter((m): m is TaskAssignee => m !== null)
+    .sort((a, b) => a.id - b.id);
+}
 
-  const assigneeRows = (assigneeRowsRes.data ?? []) as { task_id: number; member_id: number }[];
-  const memberIds = Array.from(new Set(assigneeRows.map((r) => r.member_id)));
-  const membersRes =
-    memberIds.length > 0
-      ? await supabase.from("members").select("id, name").in("id", memberIds)
-      : { data: [] as { id: number; name: string }[], error: null };
-  if (membersRes.error) throw mapPostgrestError(membersRes.error, "failed to load assignees");
+function extractStepCounts(embeds: TaskAggregateEmbeds): { steps_total: number; steps_done: number } {
+  const steps = (embeds.steps ?? []) as { done: boolean }[];
+  return {
+    steps_total: steps.length,
+    steps_done: steps.filter((s) => s.done).length,
+  };
+}
 
-  const memberNameById = new Map<number, string>();
-  for (const m of (membersRes.data ?? []) as { id: number; name: string }[]) {
-    memberNameById.set(m.id, m.name);
-  }
-
-  const assigneesByTaskId = new Map<number, TaskAssignee[]>();
-  for (const row of assigneeRows) {
-    const list = assigneesByTaskId.get(row.task_id) ?? [];
-    list.push({ id: row.member_id, name: memberNameById.get(row.member_id) ?? "" });
-    assigneesByTaskId.set(row.task_id, list);
-  }
-  for (const list of assigneesByTaskId.values()) {
-    list.sort((a, b) => a.id - b.id);
-  }
-
-  const stepCounts = new Map<number, { total: number; done: number }>();
-  for (const s of (stepsRes.data ?? []) as { task_id: number; done: boolean }[]) {
-    const entry = stepCounts.get(s.task_id) ?? { total: 0, done: 0 };
-    entry.total += 1;
-    if (s.done) entry.done += 1;
-    stepCounts.set(s.task_id, entry);
-  }
-
-  return tasks.map((t) => ({
-    ...t,
-    assignees: assigneesByTaskId.get(t.id) ?? [],
-    steps_total: stepCounts.get(t.id)?.total ?? 0,
-    steps_done: stepCounts.get(t.id)?.done ?? 0,
-  }));
+/** Maps a `tasks` row fetched with TASK_WITH_AGGREGATES_SELECT into the public TaskWithAssignee shape. */
+function mapTaskRowWithEmbeds(row: Task & TaskAggregateEmbeds): TaskWithAssignee {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- destructured only to omit these keys from `task`
+  const { task_assignees: _taskAssignees, steps: _steps, ...task } = row;
+  return {
+    ...(task as Task),
+    assignees: extractAssignees(row),
+    ...extractStepCounts(row),
+  };
 }
 
 export async function listTasks(filter: TaskFilter = {}): Promise<TaskWithAssignee[]> {
@@ -657,7 +626,12 @@ export async function listTasks(filter: TaskFilter = {}): Promise<TaskWithAssign
     if (assigneeTaskIds.length === 0) return [];
   }
 
-  let query = supabase.from("tasks").select("*").order("id", { ascending: true });
+  // Resource embedding pulls assignees + step done-counts in the same
+  // request as the task rows themselves (was a separate 2-3 query fan-out).
+  let query = supabase
+    .from("tasks")
+    .select(TASK_WITH_AGGREGATES_SELECT)
+    .order("id", { ascending: true });
 
   if (filter.projectId !== undefined) {
     query = query.eq("project_id", filter.projectId);
@@ -671,23 +645,29 @@ export async function listTasks(filter: TaskFilter = {}): Promise<TaskWithAssign
 
   const { data, error } = await query;
   if (error) throw mapPostgrestError(error, "failed to list tasks");
-  return attachTaskAggregates((data ?? []) as Task[]);
+  return ((data ?? []) as (Task & TaskAggregateEmbeds)[]).map(mapTaskRowWithEmbeds);
 }
 
 export async function getTaskById(id: number): Promise<TaskWithAssignee | undefined> {
   const supabase = getSupabase();
-  const { data, error } = await supabase.from("tasks").select("*").eq("id", id).maybeSingle();
+  const { data, error } = await supabase
+    .from("tasks")
+    .select(TASK_WITH_AGGREGATES_SELECT)
+    .eq("id", id)
+    .maybeSingle();
   if (error) throw mapPostgrestError(error, "failed to load task");
   if (!data) return undefined;
-  const [withAggregates] = await attachTaskAggregates([data as Task]);
-  return withAggregates;
+  return mapTaskRowWithEmbeds(data as Task & TaskAggregateEmbeds);
 }
 
 export async function createTask(
   input: CreateTaskInput,
   actor: ActorInput = {}
 ): Promise<TaskWithAssignee> {
-  const projectId = await assertValidProjectId(input.project_id);
+  // project_id existence is validated via the insert's FK error below rather
+  // than with a dedicated pre-check query (tasks has exactly one FK column,
+  // so any 23503 here can only mean an unknown project_id).
+  const projectId = assertValidPositiveInt(input.project_id, "project_id");
   const title = assertValidTitle(input.title);
   const description = normalizeDescription(input.description);
   const assigneeIds = await assertValidAssigneeIds(input.assignee_ids);
@@ -707,14 +687,26 @@ export async function createTask(
     })
     .select("*")
     .single();
-  if (error) throw mapPostgrestError(error, "failed to create task");
+  if (error) {
+    if (error.code === "23503") {
+      throw new ValidationError(`project_id ${projectId} does not reference an existing project`);
+    }
+    throw mapPostgrestError(error, "failed to create task");
+  }
   const task = data as Task;
 
+  let assignees: TaskAssignee[] = [];
   if (assigneeIds.length > 0) {
-    const { error: assignError } = await supabase
+    // Embedding members(id,name) on the insert's select returns the
+    // assignee names in the same round trip, avoiding a follow-up lookup.
+    const { data: assigneeData, error: assignError } = await supabase
       .from("task_assignees")
-      .insert(assigneeIds.map((member_id) => ({ task_id: task.id, member_id })));
+      .insert(assigneeIds.map((member_id) => ({ task_id: task.id, member_id })))
+      .select("member:members(id,name)");
     if (assignError) throw mapPostgrestError(assignError, "failed to assign members to task");
+    assignees = ((assigneeData ?? []) as unknown as { member: TaskAssignee }[])
+      .map((r) => r.member)
+      .sort((a, b) => a.id - b.id);
   }
 
   await logActivity({
@@ -726,7 +718,14 @@ export async function createTask(
     actor_name: resolvedActor.actor_name,
   });
 
-  return (await getTaskById(task.id)) as TaskWithAssignee;
+  // A brand new task never has steps yet, so steps_total/steps_done are
+  // always 0 — no need to re-fetch the task to build the response.
+  return {
+    ...task,
+    assignees,
+    steps_total: 0,
+    steps_done: 0,
+  };
 }
 
 export async function updateTask(
@@ -735,26 +734,27 @@ export async function updateTask(
   actor: ActorInput = {}
 ): Promise<TaskWithAssignee> {
   const supabase = getSupabase();
+
+  // Single round trip: fetch the task plus its current assignees (with
+  // names) and step done-counts. Steps aren't touched by this function, so
+  // this "before" snapshot doubles as the step aggregates for the response.
   const { data: existingData, error: fetchError } = await supabase
     .from("tasks")
-    .select("*")
+    .select(TASK_WITH_AGGREGATES_SELECT)
     .eq("id", id)
     .maybeSingle();
   if (fetchError) throw mapPostgrestError(fetchError, "failed to load task");
   if (!existingData) {
     throw new NotFoundError(`task ${id} not found`);
   }
-  const existing = existingData as Task;
-
-  const { data: existingAssigneeRows, error: existingAssigneeError } = await supabase
-    .from("task_assignees")
-    .select("member_id")
-    .eq("task_id", id);
-  if (existingAssigneeError)
-    throw mapPostgrestError(existingAssigneeError, "failed to load task assignees");
-  const existingAssigneeIds = ((existingAssigneeRows ?? []) as { member_id: number }[]).map(
-    (r) => r.member_id
-  );
+  const existingRow = existingData as Task & TaskAggregateEmbeds;
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- destructured only to omit these keys from `existingFields`
+  const { task_assignees: _existingTaskAssignees, steps: _existingSteps, ...existingFields } =
+    existingRow;
+  const existing = existingFields as Task;
+  const existingAssignees = extractAssignees(existingRow);
+  const existingAssigneeIds = existingAssignees.map((a) => a.id);
+  const stepCounts = extractStepCounts(existingRow);
 
   const title = input.title === undefined ? existing.title : assertValidTitle(input.title);
   const description =
@@ -785,6 +785,7 @@ export async function updateTask(
   if (error) throw mapPostgrestError(error, "failed to update task");
   const updated = data as Task;
 
+  let finalAssignees = existingAssignees;
   if (assigneeIdsProvided) {
     const { error: deleteError } = await supabase
       .from("task_assignees")
@@ -792,10 +793,16 @@ export async function updateTask(
       .eq("task_id", id);
     if (deleteError) throw mapPostgrestError(deleteError, "failed to update task assignees");
     if (newAssigneeIds.length > 0) {
-      const { error: insertError } = await supabase
+      const { data: insertedData, error: insertError } = await supabase
         .from("task_assignees")
-        .insert(newAssigneeIds.map((member_id) => ({ task_id: id, member_id })));
+        .insert(newAssigneeIds.map((member_id) => ({ task_id: id, member_id })))
+        .select("member:members(id,name)");
       if (insertError) throw mapPostgrestError(insertError, "failed to update task assignees");
+      finalAssignees = ((insertedData ?? []) as unknown as { member: TaskAssignee }[])
+        .map((r) => r.member)
+        .sort((a, b) => a.id - b.id);
+    } else {
+      finalAssignees = [];
     }
   }
 
@@ -815,15 +822,18 @@ export async function updateTask(
     (beforeIdSet.size !== afterIdSet.size ||
       [...beforeIdSet].some((memberId) => !afterIdSet.has(memberId)));
   if (assigneesChanged) {
-    const [beforeNames, afterNames] = await Promise.all([
-      fetchMemberNames(existingAssigneeIds),
-      fetchMemberNames(newAssigneeIds),
-    ]);
+    // Names are already in hand from the embedded before/after assignee
+    // fetches above, so no extra member lookups are needed here.
+    const beforeNames = existingAssignees.map((a) => a.name).sort((a, b) => a.localeCompare(b));
+    const afterNames = finalAssignees.map((a) => a.name).sort((a, b) => a.localeCompare(b));
     changedFields.assignees = { before: beforeNames, after: afterNames };
   }
 
+  // Both possible activity rows (if applicable) are inserted together in a
+  // single bulk insert instead of two separate round trips.
+  const activityRows: LogActivityParams[] = [];
   if (Object.keys(changedFields).length > 0) {
-    await logActivity({
+    activityRows.push({
       project_id: updated.project_id,
       task_id: updated.id,
       type: "task_updated",
@@ -833,7 +843,7 @@ export async function updateTask(
     });
   }
   if (statusChanged) {
-    await logActivity({
+    activityRows.push({
       project_id: updated.project_id,
       task_id: updated.id,
       type: "task_status_changed",
@@ -842,26 +852,30 @@ export async function updateTask(
       actor_name: resolvedActor.actor_name,
     });
   }
+  await logActivities(activityRows);
 
-  return (await getTaskById(id)) as TaskWithAssignee;
+  return {
+    ...updated,
+    assignees: finalAssignees,
+    ...stepCounts,
+  };
 }
 
 export async function deleteTask(id: number, actor: ActorInput = {}): Promise<void> {
   const supabase = getSupabase();
-  const { data: existingData, error: fetchError } = await supabase
-    .from("tasks")
-    .select("*")
-    .eq("id", id)
-    .maybeSingle();
-  if (fetchError) throw mapPostgrestError(fetchError, "failed to load task");
-  if (!existingData) {
-    throw new NotFoundError(`task ${id} not found`);
-  }
-  const existing = existingData as Task;
   const resolvedActor = await resolveActor(actor.actor_id, actor.actor_name);
 
-  const { error } = await supabase.from("tasks").delete().eq("id", id);
+  const { data, error } = await supabase
+    .from("tasks")
+    .delete()
+    .eq("id", id)
+    .select("*")
+    .maybeSingle();
   if (error) throw mapPostgrestError(error, "failed to delete task");
+  if (!data) {
+    throw new NotFoundError(`task ${id} not found`);
+  }
+  const existing = data as Task;
 
   // task_id is left null: activities.task_id is ON DELETE CASCADE, so a row
   // pointing at the just-deleted task would either fail the FK check or be
@@ -878,24 +892,20 @@ export async function deleteTask(id: number, actor: ActorInput = {}): Promise<vo
 
 export async function listTaskActivities(taskId: number, limit = 100): Promise<Activity[]> {
   const supabase = getSupabase();
-  const { data: task, error: taskError } = await supabase
+  // Embed activities under their parent task so the existence check and the
+  // activity list come back in a single round trip.
+  const { data, error } = await supabase
     .from("tasks")
-    .select("id")
+    .select("id, activities(*)")
     .eq("id", taskId)
+    .order("created_at", { ascending: false, referencedTable: "activities" })
+    .limit(limit, { referencedTable: "activities" })
     .maybeSingle();
-  if (taskError) throw mapPostgrestError(taskError, "failed to load task");
-  if (!task) {
+  if (error) throw mapPostgrestError(error, "failed to load task");
+  if (!data) {
     throw new NotFoundError(`task ${taskId} not found`);
   }
-
-  const { data, error } = await supabase
-    .from("activities")
-    .select("*")
-    .eq("task_id", taskId)
-    .order("created_at", { ascending: false })
-    .limit(limit);
-  if (error) throw mapPostgrestError(error, "failed to list activities");
-  return (data ?? []) as Activity[];
+  return ((data as { activities: Activity[] | null }).activities ?? []) as Activity[];
 }
 
 // ---------- Comments ----------
@@ -910,6 +920,9 @@ export async function createComment(
   input: CreateCommentInput,
   actor: ActorInput = {}
 ): Promise<Activity> {
+  // This lookup both 404s on an unknown task and supplies the project_id
+  // value the activities row itself needs, so it can't be dropped in favor
+  // of an FK-error translation the way pure existence checks can.
   const projectId = await getTaskProjectId(taskId);
   const text = assertValidCommentText(input.text);
   const resolvedActor = await resolveActor(actor.actor_id, actor.actor_name);
@@ -933,14 +946,16 @@ export async function createComment(
 
 export async function deleteActivity(id: number): Promise<void> {
   const supabase = getSupabase();
-  const { data, error } = await supabase.from("activities").select("id").eq("id", id).maybeSingle();
-  if (error) throw mapPostgrestError(error, "failed to load activity");
+  const { data, error } = await supabase
+    .from("activities")
+    .delete()
+    .eq("id", id)
+    .select("id")
+    .maybeSingle();
+  if (error) throw mapPostgrestError(error, "failed to delete activity");
   if (!data) {
     throw new NotFoundError(`activity ${id} not found`);
   }
-
-  const { error: deleteError } = await supabase.from("activities").delete().eq("id", id);
-  if (deleteError) throw mapPostgrestError(deleteError, "failed to delete activity");
 }
 
 // ---------- Steps ----------
@@ -971,16 +986,25 @@ async function getTaskProjectId(taskId: number): Promise<number> {
 }
 
 export async function listSteps(taskId: number): Promise<Step[]> {
-  await getTaskProjectId(taskId); // 404s if the task doesn't exist
   const supabase = getSupabase();
+  // Embedding steps under their parent task folds the "does the task exist"
+  // check and the steps list into a single round trip.
   const { data, error } = await supabase
-    .from("steps")
-    .select("*")
-    .eq("task_id", taskId)
-    .order("position", { ascending: true })
-    .order("id", { ascending: true });
+    .from("tasks")
+    .select("id, steps(*)")
+    .eq("id", taskId)
+    .order("position", { referencedTable: "steps", ascending: true })
+    .order("id", { referencedTable: "steps", ascending: true })
+    .maybeSingle();
   if (error) throw mapPostgrestError(error, "failed to list steps");
-  return (data ?? []) as Step[];
+  if (!data) {
+    throw new NotFoundError(`task ${taskId} not found`);
+  }
+  return ((data as { steps: Step[] | null }).steps ?? []) as Step[];
+}
+
+interface StepWithTaskEmbed extends Step {
+  tasks: { project_id: number } | null;
 }
 
 export async function createStep(
@@ -988,19 +1012,29 @@ export async function createStep(
   input: CreateStepInput,
   actor: ActorInput = {}
 ): Promise<Step> {
-  const projectId = await getTaskProjectId(taskId);
   const title = assertValidTitle(input.title);
   const position = assertValidPosition(input.position);
   const resolvedActor = await resolveActor(actor.actor_id, actor.actor_name);
 
   const supabase = getSupabase();
+  // steps has exactly one FK column (task_id), so a 23503 here can only mean
+  // the task doesn't exist — no separate existence pre-check is needed.
+  // Embedding tasks(project_id) on the select also supplies the project_id
+  // the activity log needs, in the same round trip as the insert.
   const { data, error } = await supabase
     .from("steps")
     .insert({ task_id: taskId, title, position })
-    .select("*")
+    .select("*, tasks(project_id)")
     .single();
-  if (error) throw mapPostgrestError(error, "failed to create step");
-  const step = data as Step;
+  if (error) {
+    if (error.code === "23503") {
+      throw new NotFoundError(`task ${taskId} not found`);
+    }
+    throw mapPostgrestError(error, "failed to create step");
+  }
+  const { tasks, ...stepFields } = data as StepWithTaskEmbed;
+  const step = stepFields as Step;
+  const projectId = (tasks as { project_id: number }).project_id;
 
   await logActivity({
     project_id: projectId,
@@ -1020,16 +1054,20 @@ export async function updateStep(
   actor: ActorInput = {}
 ): Promise<Step> {
   const supabase = getSupabase();
+  // Embedding tasks(project_id) here supplies the project_id the activity
+  // log needs later, avoiding a separate getTaskProjectId() round trip.
   const { data: existingData, error: fetchError } = await supabase
     .from("steps")
-    .select("*")
+    .select("*, tasks(project_id)")
     .eq("id", id)
     .maybeSingle();
   if (fetchError) throw mapPostgrestError(fetchError, "failed to load step");
   if (!existingData) {
     throw new NotFoundError(`step ${id} not found`);
   }
-  const existing = existingData as Step;
+  const { tasks, ...existingFields } = existingData as StepWithTaskEmbed;
+  const existing = existingFields as Step;
+  const projectId = (tasks as { project_id: number }).project_id;
 
   const title = input.title === undefined ? existing.title : assertValidTitle(input.title);
   const position =
@@ -1052,7 +1090,6 @@ export async function updateStep(
   if (error) throw mapPostgrestError(error, "failed to update step");
   const updated = data as Step;
 
-  const projectId = await getTaskProjectId(existing.task_id);
   if (done !== existing.done) {
     await logActivity({
       project_id: projectId,
@@ -1069,22 +1106,25 @@ export async function updateStep(
 
 export async function deleteStep(id: number, actor: ActorInput = {}): Promise<void> {
   const supabase = getSupabase();
-  const { data: existingData, error: fetchError } = await supabase
-    .from("steps")
-    .select("*")
-    .eq("id", id)
-    .maybeSingle();
-  if (fetchError) throw mapPostgrestError(fetchError, "failed to load step");
-  if (!existingData) {
-    throw new NotFoundError(`step ${id} not found`);
-  }
-  const existing = existingData as Step;
   const resolvedActor = await resolveActor(actor.actor_id, actor.actor_name);
 
-  const { error } = await supabase.from("steps").delete().eq("id", id);
+  // delete().select() returns the deleted row (with its parent task's
+  // project_id embedded) in one round trip, replacing both the previous
+  // existence pre-check and the separate getTaskProjectId() lookup.
+  const { data, error } = await supabase
+    .from("steps")
+    .delete()
+    .eq("id", id)
+    .select("*, tasks(project_id)")
+    .maybeSingle();
   if (error) throw mapPostgrestError(error, "failed to delete step");
+  if (!data) {
+    throw new NotFoundError(`step ${id} not found`);
+  }
+  const { tasks, ...existingFields } = data as StepWithTaskEmbed;
+  const existing = existingFields as Step;
+  const projectId = (tasks as { project_id: number }).project_id;
 
-  const projectId = await getTaskProjectId(existing.task_id);
   await logActivity({
     project_id: projectId,
     task_id: existing.task_id,
@@ -1097,68 +1137,61 @@ export async function deleteStep(id: number, actor: ActorInput = {}): Promise<vo
 
 // ---------- Stats ----------
 
+interface TaskStatRow {
+  status: TaskStatus;
+  task_assignees: { member_id: number }[] | null;
+}
+
+/** Resolves the task rows (with their assignee ids) that projectStats() aggregates over. */
+async function fetchStatsTasks(projectId: number | undefined): Promise<TaskStatRow[]> {
+  const supabase = getSupabase();
+
+  if (projectId !== undefined) {
+    // Rooting the query at "projects" folds the project-existence check and
+    // the task/assignee data into a single round trip.
+    const { data, error } = await supabase
+      .from("projects")
+      .select("id, tasks(status, task_assignees(member_id))")
+      .eq("id", projectId)
+      .maybeSingle();
+    if (error) throw mapPostgrestError(error, "failed to load project");
+    if (!data) {
+      throw new NotFoundError(`project ${projectId} not found`);
+    }
+    return ((data as { tasks: TaskStatRow[] | null }).tasks ?? []) as TaskStatRow[];
+  }
+
+  const { data, error } = await supabase.from("tasks").select("status, task_assignees(member_id)");
+  if (error) throw mapPostgrestError(error, "failed to load tasks for stats");
+  return (data ?? []) as TaskStatRow[];
+}
+
 /**
  * Per-member task totals/done counts. When projectId is omitted, aggregates
  * across every task in every project (preserves the pre-v2 /api/stats shape
  * used by the existing dashboard UI).
  */
 export async function projectStats(projectId?: number): Promise<MemberStat[]> {
+  // The task/assignee fetch and the member list are independent of each
+  // other, so they're issued concurrently instead of back-to-back.
   const supabase = getSupabase();
+  const [tasks, membersRes] = await Promise.all([
+    fetchStatsTasks(projectId),
+    supabase.from("members").select("id, name").order("id", { ascending: true }),
+  ]);
+  if (membersRes.error) throw mapPostgrestError(membersRes.error, "failed to load members for stats");
 
-  if (projectId !== undefined) {
-    const { data: project, error: projectError } = await supabase
-      .from("projects")
-      .select("id")
-      .eq("id", projectId)
-      .maybeSingle();
-    if (projectError) throw mapPostgrestError(projectError, "failed to load project");
-    if (!project) {
-      throw new NotFoundError(`project ${projectId} not found`);
+  const counts = new Map<number, { total: number; done: number }>();
+  for (const task of tasks) {
+    for (const a of task.task_assignees ?? []) {
+      const entry = counts.get(a.member_id) ?? { total: 0, done: 0 };
+      entry.total += 1;
+      if (task.status === "done") entry.done += 1;
+      counts.set(a.member_id, entry);
     }
   }
 
-  let taskQuery = supabase.from("tasks").select("id, status");
-  if (projectId !== undefined) {
-    taskQuery = taskQuery.eq("project_id", projectId);
-  }
-  const { data: taskRows, error: taskError } = await taskQuery;
-  if (taskError) throw mapPostgrestError(taskError, "failed to load tasks for stats");
-
-  const tasks = (taskRows ?? []) as { id: number; status: TaskStatus }[];
-  const statusById = new Map(tasks.map((t) => [t.id, t.status]));
-
-  // A task counts toward *every* member assigned to it (a task with two
-  // assignees counts once in each of their totals).
-  let assigneeRows: { task_id: number; member_id: number }[] = [];
-  if (tasks.length > 0) {
-    const { data, error } = await supabase
-      .from("task_assignees")
-      .select("task_id, member_id")
-      .in(
-        "task_id",
-        tasks.map((t) => t.id)
-      );
-    if (error) throw mapPostgrestError(error, "failed to load task assignees for stats");
-    assigneeRows = (data ?? []) as { task_id: number; member_id: number }[];
-  }
-
-  const { data: memberRows, error: memberError } = await supabase
-    .from("members")
-    .select("id, name")
-    .order("id", { ascending: true });
-  if (memberError) throw mapPostgrestError(memberError, "failed to load members for stats");
-
-  const counts = new Map<number, { total: number; done: number }>();
-  for (const row of assigneeRows) {
-    const status = statusById.get(row.task_id);
-    if (status === undefined) continue;
-    const entry = counts.get(row.member_id) ?? { total: 0, done: 0 };
-    entry.total += 1;
-    if (status === "done") entry.done += 1;
-    counts.set(row.member_id, entry);
-  }
-
-  return ((memberRows ?? []) as { id: number; name: string }[]).map((m) => ({
+  return ((membersRes.data ?? []) as { id: number; name: string }[]).map((m) => ({
     id: m.id,
     name: m.name,
     total: counts.get(m.id)?.total ?? 0,
