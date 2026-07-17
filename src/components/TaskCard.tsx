@@ -6,14 +6,12 @@ import { formatDueDate, isOverdue } from "@/lib/date";
 
 interface TaskCardProps {
   task: TaskWithAssignee;
-  /** ステータス変更・削除は管理者のみ操作できるため、非管理者にはロック表示する。 */
-  admin: boolean;
   onStatusChange: (id: number, status: TaskStatus) => void;
   onOpenDetail: (task: TaskWithAssignee) => void;
   onDelete: (task: TaskWithAssignee) => void;
 }
 
-export default function TaskCard({ task, admin, onStatusChange, onOpenDetail, onDelete }: TaskCardProps) {
+export default function TaskCard({ task, onStatusChange, onOpenDetail, onDelete }: TaskCardProps) {
   const overdue = isOverdue(task.due_date, task.status);
   const stepPercent = task.steps_total > 0 ? Math.round((task.steps_done / task.steps_total) * 100) : 0;
 
@@ -103,9 +101,7 @@ export default function TaskCard({ task, admin, onStatusChange, onOpenDetail, on
           id={`status-${task.id}`}
           value={task.status}
           onChange={(e) => onStatusChange(task.id, e.target.value as TaskStatus)}
-          disabled={!admin}
-          title={!admin ? "管理者のみ変更できます" : undefined}
-          className={`rounded-md px-2 py-1 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-70 ${STATUS_META[task.status].badgeClass}`}
+          className={`rounded-md px-2 py-1 text-xs font-medium ${STATUS_META[task.status].badgeClass}`}
         >
           {TASK_STATUSES.map((status) => (
             <option key={status} value={status}>
@@ -123,16 +119,14 @@ export default function TaskCard({ task, admin, onStatusChange, onOpenDetail, on
           >
             詳細
           </button>
-          {admin ? (
-            <button
-              type="button"
-              onClick={() => onDelete(task)}
-              aria-label={`「${task.title}」を削除`}
-              className="rounded-md px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50"
-            >
-              削除
-            </button>
-          ) : null}
+          <button
+            type="button"
+            onClick={() => onDelete(task)}
+            aria-label={`「${task.title}」を削除`}
+            className="rounded-md px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50"
+          >
+            削除
+          </button>
         </div>
       </div>
     </li>

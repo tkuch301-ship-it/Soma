@@ -18,11 +18,3 @@ export class ConflictError extends Error {
     this.name = "ConflictError";
   }
 }
-
-/** Thrown by src/lib/adminAuth.ts's requireAdmin() when a request lacks a valid admin session. */
-export class ForbiddenError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "ForbiddenError";
-  }
-}
