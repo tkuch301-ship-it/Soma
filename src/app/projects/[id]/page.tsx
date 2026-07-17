@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import type { Activity, Member, MemberStat, ProjectWithStats, TaskStatus, TaskWithAssignee } from "@/lib/repo";
@@ -27,7 +27,10 @@ export default function ProjectBoardPage() {
   const [actor] = useActor();
 
   const [project, setProject] = useState<ProjectWithStats | null>(null);
-  const [tasks, setTasks] = useState<TaskWithAssignee[]>([]);
+  // Unfiltered project tasks. The board's assignee filter is applied
+  // client-side (see `tasks` below) so we only ever fetch this one list —
+  // it also feeds the deadline panel and the Discord summary generator,
+  // both of which need the whole project regardless of the current filter.
   const [allTasks, setAllTasks] = useState<TaskWithAssignee[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
   const [stats, setStats] = useState<MemberStat[]>([]);
@@ -36,9 +39,23 @@ export default function ProjectBoardPage() {
 
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // Non-blocking error shown alongside the board (e.g. a failed optimistic
+  // status update) without hiding the already-rendered content like
+  // `loadError` does.
+  const [actionError, setActionError] = useState<string | null>(null);
   const [notFound, setNotFound] = useState(false);
 
   const [filterAssigneeId, setFilterAssigneeId] = useState<"all" | number>("all");
+
+  // Number of status-change PATCH requests currently in flight. While this
+  // is non-zero, background polling is paused so a slower poll response
+  // can't clobber the optimistic update it raced with.
+  const [pendingPatches, setPendingPatches] = useState(0);
+
+  const tasks = useMemo(() => {
+    if (filterAssigneeId === "all") return allTasks;
+    return allTasks.filter((t) => t.assignees.some((a) => a.id === filterAssigneeId));
+  }, [allTasks, filterAssigneeId]);
 
   const [formOpen, setFormOpen] = useState(false);
   const [formSubmitting, setFormSubmitting] = useState(false);
@@ -47,10 +64,7 @@ export default function ProjectBoardPage() {
   const [detailTask, setDetailTask] = useState<TaskWithAssignee | null>(null);
 
   const refresh = useCallback(
-    async (
-      assigneeFilter: "all" | number,
-      options?: { silent?: boolean }
-    ): Promise<TaskWithAssignee[] | undefined> => {
+    async (options?: { silent?: boolean }): Promise<TaskWithAssignee[] | undefined> => {
       const silent = options?.silent ?? false;
       if (!Number.isInteger(projectId) || projectId <= 0) {
         setNotFound(true);
@@ -60,12 +74,10 @@ export default function ProjectBoardPage() {
       if (!silent) setLoading(true);
       setLoadError(null);
       try {
-        const [projects, tasksRes, allTasksRes, membersRes, statsRes, activitiesRes] = await Promise.all([
+        const [projects, tasksRes, membersRes, statsRes, activitiesRes] = await Promise.all([
           api.listProjects(),
-          api.listTasks(assigneeFilter === "all" ? { projectId } : { projectId, assigneeId: assigneeFilter }),
-          // Unfiltered project tasks (independent of the assignee filter above),
-          // used by the deadline panel and the Discord summary generator so
-          // both reflect the whole project regardless of the current filter.
+          // Single unfiltered fetch — the assignee filter is applied
+          // client-side, so we no longer need a second (filtered) request.
           api.listTasks({ projectId }),
           api.listMembers(),
           api.memberStats(projectId),
@@ -78,8 +90,7 @@ export default function ProjectBoardPage() {
           setNotFound(false);
         }
         setProject(found);
-        setTasks(tasksRes);
-        setAllTasks(allTasksRes);
+        setAllTasks(tasksRes);
         setMembers(membersRes);
         setStats(statsRes);
         setActivities(activitiesRes);
@@ -99,16 +110,15 @@ export default function ProjectBoardPage() {
   );
 
   useEffect(() => {
-    refresh(filterAssigneeId);
-    // refresh identity depends on projectId; only filterAssigneeId changes here matter.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterAssigneeId, projectId]);
+    refresh();
+  }, [refresh]);
 
-  // タスク作成フォームやタスク詳細パネルが開いている間は、編集内容や開いている
-  // タブが巻き戻らないよう自動更新を止める。それ以外は15秒ごとにサイレント更新。
-  useAutoRefresh(() => refresh(filterAssigneeId, { silent: true }), {
+  // タスク作成フォームやタスク詳細パネルが開いている間、または楽観更新した
+  // ステータス変更のPATCHが処理中の間は、編集内容や表示が巻き戻らないよう
+  // 自動更新を止める。それ以外は15秒ごとにサイレント更新。
+  useAutoRefresh(() => refresh({ silent: true }), {
     intervalMs: AUTO_REFRESH_INTERVAL_MS,
-    enabled: !formOpen && !detailTask,
+    enabled: !formOpen && !detailTask && pendingPatches === 0,
   });
 
   async function handleDeleteActivity(activity: Activity) {
@@ -116,18 +126,28 @@ export default function ProjectBoardPage() {
     if (!window.confirm(`${label}を削除しますか？`)) return;
     try {
       await api.deleteActivity(activity.id);
-      await refresh(filterAssigneeId);
+      await refresh();
     } catch (err) {
       setLoadError(err instanceof ApiError ? err.message : "履歴の削除に失敗しました");
     }
   }
 
   async function handleStatusChange(id: number, status: TaskStatus) {
+    setActionError(null);
+    const previousTasks = allTasks;
+    // Optimistic update: move the card to its new column immediately.
+    setAllTasks((prev) => prev.map((t) => (t.id === id ? { ...t, status } : t)));
+    setPendingPatches((n) => n + 1);
     try {
       await api.updateTask(id, { status });
-      await refresh(filterAssigneeId);
+      // Silent full refresh so stats/activities stay consistent; no
+      // loading spinner since the card already reflects the new status.
+      await refresh({ silent: true });
     } catch (err) {
-      setLoadError(err instanceof ApiError ? err.message : "ステータスの更新に失敗しました");
+      setAllTasks(previousTasks);
+      setActionError(err instanceof ApiError ? err.message : "ステータスの更新に失敗しました");
+    } finally {
+      setPendingPatches((n) => n - 1);
     }
   }
 
@@ -137,7 +157,7 @@ export default function ProjectBoardPage() {
     }
     try {
       await api.deleteTask(task.id);
-      await refresh(filterAssigneeId);
+      await refresh();
     } catch (err) {
       setLoadError(err instanceof ApiError ? err.message : "タスクの削除に失敗しました");
     }
@@ -158,7 +178,7 @@ export default function ProjectBoardPage() {
     setFormError(null);
     try {
       await api.createTask({ ...input, project_id: projectId });
-      await refresh(filterAssigneeId);
+      await refresh();
       setFormOpen(false);
     } catch (err) {
       setFormError(err instanceof ApiError ? err.message : "タスクの保存に失敗しました");
@@ -176,7 +196,7 @@ export default function ProjectBoardPage() {
   }
 
   async function handleDetailUpdated() {
-    const refreshedTasks = await refresh(filterAssigneeId);
+    const refreshedTasks = await refresh();
     if (refreshedTasks && detailTask) {
       const updated = refreshedTasks.find((t) => t.id === detailTask.id);
       if (updated) setDetailTask(updated);
@@ -185,7 +205,7 @@ export default function ProjectBoardPage() {
 
   async function handleDetailDeleted() {
     setDetailTask(null);
-    await refresh(filterAssigneeId);
+    await refresh();
   }
 
   async function handleCopyDiscordSummary() {
@@ -222,7 +242,7 @@ export default function ProjectBoardPage() {
           </Link>
           <button
             type="button"
-            onClick={() => refresh(filterAssigneeId)}
+            onClick={() => refresh()}
             aria-label="今すぐ更新"
             title="今すぐ更新"
             className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
@@ -268,7 +288,7 @@ export default function ProjectBoardPage() {
           <p>{loadError}</p>
           <button
             type="button"
-            onClick={() => refresh(filterAssigneeId)}
+            onClick={() => refresh()}
             className="rounded-md border border-red-300 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-100"
           >
             再読み込み
@@ -277,6 +297,22 @@ export default function ProjectBoardPage() {
       ) : (
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
           <div className="flex flex-col gap-4 lg:col-span-2">
+            {actionError ? (
+              <div
+                role="alert"
+                className="flex items-center justify-between gap-2 rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-700"
+              >
+                <p>{actionError}</p>
+                <button
+                  type="button"
+                  onClick={() => setActionError(null)}
+                  aria-label="このエラーを閉じる"
+                  className="rounded-md px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-100"
+                >
+                  ✕
+                </button>
+              </div>
+            ) : null}
             <div className="flex flex-wrap items-center justify-between gap-3">
               <FilterBar members={members} value={filterAssigneeId} onChange={setFilterAssigneeId} />
               <div className="flex flex-wrap items-center gap-2">

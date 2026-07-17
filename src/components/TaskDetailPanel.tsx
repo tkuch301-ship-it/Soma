@@ -155,12 +155,18 @@ export default function TaskDetailPanel({ task, members, onClose, onUpdated, onD
 
   async function handleToggleStep(step: Step) {
     if (!task) return;
+    setStepError(null);
+    const previousSteps = steps;
+    const optimisticDone = !step.done;
+    // Optimistic update: flip the checkbox immediately, roll back on failure.
+    setSteps((prev) => prev.map((s) => (s.id === step.id ? { ...s, done: optimisticDone } : s)));
     try {
-      await api.updateStep(step.id, { done: !step.done });
-      await loadSteps(task.id);
+      const updated = await api.updateStep(step.id, { done: optimisticDone });
+      setSteps((prev) => prev.map((s) => (s.id === step.id ? updated : s)));
       await loadActivities(task.id);
       onUpdated();
     } catch (err) {
+      setSteps(previousSteps);
       setStepError(err instanceof ApiError ? err.message : "工程の更新に失敗しました");
     }
   }
