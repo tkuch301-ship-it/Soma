@@ -14,9 +14,7 @@ import ActivityFeed from "@/components/ActivityFeed";
 import ProgressBar from "@/components/ProgressBar";
 import DeadlinePanel from "@/components/DeadlinePanel";
 import Toast from "@/components/Toast";
-import AdminBar from "@/components/AdminBar";
 import { useActor } from "@/lib/actor";
-import { useAdmin } from "@/lib/useAdmin";
 import { buildDiscordSummary } from "@/lib/discordSummary";
 import { todayIsoDate } from "@/lib/date";
 import { useAutoRefresh } from "@/lib/useAutoRefresh";
@@ -27,7 +25,6 @@ export default function ProjectBoardPage() {
   const params = useParams<{ id: string }>();
   const projectId = Number(params.id);
   const [actor] = useActor();
-  const { admin, loginModalOpen } = useAdmin();
 
   const [project, setProject] = useState<ProjectWithStats | null>(null);
   const [tasks, setTasks] = useState<TaskWithAssignee[]>([]);
@@ -107,12 +104,11 @@ export default function ProjectBoardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filterAssigneeId, projectId]);
 
-  // タスク作成フォーム・タスク詳細パネル・管理者ログインモーダルが開いている間は、
-  // 編集内容や開いているタブが巻き戻らないよう自動更新を止める。それ以外は15秒ごと
-  // にサイレント更新。
+  // タスク作成フォームやタスク詳細パネルが開いている間は、編集内容や開いている
+  // タブが巻き戻らないよう自動更新を止める。それ以外は15秒ごとにサイレント更新。
   useAutoRefresh(() => refresh(filterAssigneeId, { silent: true }), {
     intervalMs: AUTO_REFRESH_INTERVAL_MS,
-    enabled: !formOpen && !detailTask && !loginModalOpen,
+    enabled: !formOpen && !detailTask,
   });
 
   async function handleDeleteActivity(activity: Activity) {
@@ -224,18 +220,15 @@ export default function ProjectBoardPage() {
           <Link href="/" className="text-sm font-medium text-indigo-600 hover:underline">
             ← プロジェクト一覧
           </Link>
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => refresh(filterAssigneeId)}
-              aria-label="今すぐ更新"
-              title="今すぐ更新"
-              className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
-            >
-              ↻ 更新
-            </button>
-            <AdminBar />
-          </div>
+          <button
+            type="button"
+            onClick={() => refresh(filterAssigneeId)}
+            aria-label="今すぐ更新"
+            title="今すぐ更新"
+            className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+          >
+            ↻ 更新
+          </button>
         </div>
         {project ? (
           <div className="flex flex-col gap-2">
@@ -308,7 +301,6 @@ export default function ProjectBoardPage() {
 
             <Board
               tasks={tasks}
-              admin={admin}
               onStatusChange={handleStatusChange}
               onOpenDetail={handleOpenDetail}
               onDelete={handleDeleteTask}
@@ -347,7 +339,6 @@ export default function ProjectBoardPage() {
       <TaskDetailPanel
         task={detailTask}
         members={members}
-        admin={admin}
         onClose={handleCloseDetail}
         onUpdated={handleDetailUpdated}
         onDeleted={handleDetailDeleted}

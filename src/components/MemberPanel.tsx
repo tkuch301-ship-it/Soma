@@ -6,20 +6,17 @@ import EmptyState from "@/components/EmptyState";
 
 interface MemberPanelProps {
   members: Member[];
-  /** 部員の追加・削除は管理者のみ操作できるため、非管理者には操作をロック表示する。 */
-  admin: boolean;
   onAdd: (name: string) => Promise<boolean>;
   onDelete: (member: Member) => void;
   error: string | null;
   adding: boolean;
 }
 
-export default function MemberPanel({ members, admin, onAdd, onDelete, error, adding }: MemberPanelProps) {
+export default function MemberPanel({ members, onAdd, onDelete, error, adding }: MemberPanelProps) {
   const [name, setName] = useState("");
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    if (!admin) return;
     const trimmed = name.trim();
     if (trimmed.length === 0) return;
     const success = await onAdd(trimmed);
@@ -34,10 +31,6 @@ export default function MemberPanel({ members, admin, onAdd, onDelete, error, ad
         部員管理
       </h2>
 
-      {!admin ? (
-        <p className="text-xs text-slate-500">🔒 部員の追加・削除は管理者のみ操作できます</p>
-      ) : null}
-
       <form onSubmit={handleSubmit} className="flex flex-wrap items-end gap-2">
         <div className="flex flex-1 min-w-[10rem] flex-col gap-1">
           <label htmlFor="new-member-name" className="text-sm font-medium text-slate-700">
@@ -49,16 +42,13 @@ export default function MemberPanel({ members, admin, onAdd, onDelete, error, ad
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="例: 山田太郎"
-            disabled={!admin}
-            title={!admin ? "管理者のみ操作できます" : undefined}
-            className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+            className="rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
           />
         </div>
         <button
           type="submit"
-          disabled={!admin || adding || name.trim().length === 0}
+          disabled={adding || name.trim().length === 0}
           aria-label="部員を追加"
-          title={!admin ? "管理者のみ操作できます" : undefined}
           className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {adding ? "追加中..." : "部員を追加"}
@@ -83,10 +73,8 @@ export default function MemberPanel({ members, admin, onAdd, onDelete, error, ad
               <button
                 type="button"
                 onClick={() => onDelete(m)}
-                disabled={!admin}
                 aria-label={`${m.name}を削除`}
-                title={!admin ? "管理者のみ操作できます" : undefined}
-                className="rounded-md px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:text-slate-300 disabled:hover:bg-transparent"
+                className="rounded-md px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50"
               >
                 削除
               </button>

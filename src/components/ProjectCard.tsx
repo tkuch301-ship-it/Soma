@@ -6,8 +6,6 @@ import ProgressBar from "@/components/ProgressBar";
 
 interface ProjectCardProps {
   project: ProjectWithStats;
-  /** プロジェクトの編集・アーカイブ・削除は管理者のみ操作できるため、非管理者にはボタン自体を表示しない。 */
-  admin: boolean;
   onOpen: (project: ProjectWithStats) => void;
   onEdit: (project: ProjectWithStats) => void;
   onDelete: (project: ProjectWithStats) => void;
@@ -16,7 +14,6 @@ interface ProjectCardProps {
 
 export default function ProjectCard({
   project,
-  admin,
   onOpen,
   onEdit,
   onDelete,
@@ -62,33 +59,29 @@ export default function ProjectCard({
         >
           開く →
         </button>
-        {admin ? (
-          <>
-            <button
-              type="button"
-              onClick={() => onToggleArchive(project)}
-              className="rounded-md px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900"
-            >
-              {archived ? "復元する" : "アーカイブする"}
-            </button>
-            <button
-              type="button"
-              onClick={() => onEdit(project)}
-              aria-label={`「${project.name}」を編集`}
-              className="rounded-md px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900"
-            >
-              編集
-            </button>
-            <button
-              type="button"
-              onClick={() => onDelete(project)}
-              aria-label={`「${project.name}」を削除`}
-              className="rounded-md px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50"
-            >
-              削除
-            </button>
-          </>
-        ) : null}
+        <button
+          type="button"
+          onClick={() => onToggleArchive(project)}
+          className="rounded-md px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+        >
+          {archived ? "復元する" : "アーカイブする"}
+        </button>
+        <button
+          type="button"
+          onClick={() => onEdit(project)}
+          aria-label={`「${project.name}」を編集`}
+          className="rounded-md px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+        >
+          編集
+        </button>
+        <button
+          type="button"
+          onClick={() => onDelete(project)}
+          aria-label={`「${project.name}」を削除`}
+          className="rounded-md px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50"
+        >
+          削除
+        </button>
       </div>
     </li>
   );

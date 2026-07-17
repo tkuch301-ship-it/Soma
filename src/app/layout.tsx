@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import { AdminProvider } from "@/lib/useAdmin";
 
 export const metadata: Metadata = {
   title: "Soma - サークルタスク管理",
@@ -14,9 +13,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ja">
-      <body className="antialiased">
-        <AdminProvider>{children}</AdminProvider>
-      </body>
+      <body className="antialiased">{children}</body>
     </html>
   );
 }
