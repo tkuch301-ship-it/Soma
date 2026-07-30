@@ -150,7 +150,30 @@
     border-left: 3px solid var(--warn); background: var(--mark-redundant);
     padding: 12px 14px; border-radius: 0 8px 8px 0; font-size: 14px; margin-bottom: 20px;
   }
+  .notice b { display: block; margin-bottom: 2px; }
+  .notice ol { margin: 6px 0 0; padding-left: 20px; }
+  .notice li { margin-bottom: 2px; }
   .fine { color: var(--muted); font-size: 12.5px; line-height: 1.6; }
+
+  /* マイク許可の状態表示 */
+  .micbar {
+    display: flex; align-items: center; gap: 9px; flex-wrap: wrap;
+    font-size: 13px; color: var(--ink-2);
+    padding: 10px 14px; margin-bottom: 24px;
+    border: 1px solid var(--hairline); border-radius: 8px; background: var(--surface);
+  }
+  .micbar .dot {
+    width: 8px; height: 8px; border-radius: 50%; flex: none;
+    background: var(--muted); box-shadow: 0 0 0 3px var(--rule);
+  }
+  .micbar[data-mic="ok"] .dot { background: var(--accent); box-shadow: 0 0 0 3px var(--mark-redundant); }
+  .micbar[data-mic="no"] .dot { background: var(--over); box-shadow: 0 0 0 3px var(--mark-filler); }
+  .micbar button {
+    font: inherit; font-size: 13px; margin-left: auto; padding: 6px 14px; cursor: pointer;
+    background: none; color: var(--accent-ink); font-weight: 700;
+    border: 1px solid var(--accent); border-radius: 999px;
+  }
+  .micbar[data-mic="ok"] button { display: none; }
 
   /* ---- the instrument: timer ---- */
   .prompt-q {
@@ -269,9 +292,12 @@
         <b>このブラウザでは音声認識が使えません。</b><br>
         Chrome または Edge で開くと動きます(Safari・Firefox は日本語の音声認識に未対応です)。
       </div>
-      <div class="notice hide" id="mic-blocked">
-        <b>マイクを使えませんでした。</b><br>
-        埋め込み表示ではマイクがブロックされることがあります。このページを<b>新しいタブで開く</b>と使えます。
+      <div class="notice hide" id="mic-blocked"></div>
+
+      <div class="micbar" id="micbar" data-mic="unknown">
+        <i class="dot" id="micdot"></i>
+        <span id="mictext">マイクの状態を確認していません</span>
+        <button type="button" id="micask">マイクを許可</button>
       </div>
 
       <div class="group">
@@ -415,6 +441,81 @@ function show(v) {
 }
 
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition || null;
+const EMBEDDED = (() => { try { return window.self !== window.top; } catch (_) { return true; } })();
+
+/* ---------- マイク許可 ----------
+   録音開始時に暗黙で要求すると、拒否されるまで状態が分からない。
+   練習に入る前に getUserMedia を明示的に呼んで許可ダイアログを出し、
+   結果を画面に出す。ストリームは許可を得る目的だけなのですぐ止める。 */
+function askMic() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia)
+    return Promise.resolve({ ok: false, why: "unsupported" });
+
+  // 埋め込み枠が allow="microphone" を付けていないと、そもそも要求が通らない。
+  // 待たずに判定できるので先に見る
+  try {
+    const fp = document.featurePolicy;
+    if (fp && fp.allowsFeature && !fp.allowsFeature("microphone"))
+      return Promise.resolve({ ok: false, why: "policy" });
+  } catch (_) {}
+
+  const req = navigator.mediaDevices.getUserMedia({ audio: true }).then(
+    (stream) => { stream.getTracks().forEach((t) => t.stop()); return { ok: true }; },
+    (e) => ({ ok: false, why: (e && e.name) || "error" })
+  );
+
+  // 許可ダイアログを放置されると getUserMedia は解決しない。
+  // 待ち続けて画面が固まらないよう打ち切り、後から応答が来たら塗り直す
+  let settled = false;
+  req.then((r) => { settled = true; paintMic(r.ok ? "ok" : "no", r.why); });
+  const giveUp = new Promise((res) =>
+    setTimeout(() => { if (!settled) res({ ok: false, why: "pending" }); }, 12000));
+  return Promise.race([req, giveUp]);
+}
+
+/* ダイアログを出さずに現在の許可状態だけ調べる(未対応ブラウザでは null) */
+async function peekMic() {
+  try {
+    if (!navigator.permissions || !navigator.permissions.query) return null;
+    const st = await navigator.permissions.query({ name: "microphone" });
+    return st.state; // granted / denied / prompt
+  } catch (_) { return null; }
+}
+
+function paintMic(state, why) {
+  const bar = $("micbar"), dot = $("micdot"), text = $("mictext"), note = $("mic-blocked");
+  bar.dataset.mic = state;
+  note.classList.add("hide");
+
+  if (state === "ok") {
+    text.textContent = "マイクは許可されています";
+  } else if (state === "wait") {
+    text.textContent = "許可の応答を待っています";
+    note.innerHTML = "<b>許可ダイアログに応答してください。</b>" +
+      "画面に出ていない場合は、アドレスバー左端の 🔒 をクリックしてマイクを「許可」に変えてください。";
+    note.classList.remove("hide");
+  } else if (state === "no") {
+    text.textContent = "マイクが使えません";
+    let body;
+    if (why === "unsupported") {
+      body = "<b>このブラウザはマイクを扱えません。</b>Chrome または Edge で開いてください。";
+    } else if (why === "policy" || EMBEDDED) {
+      body = "<b>埋め込み表示のため、マイクがブロックされました。</b>" +
+             "このページを<b>新しいタブで開く</b>と使えます。";
+    } else {
+      body = "<b>マイクの使用が拒否されました。</b>" +
+             "<ol><li>アドレスバー左端の 🔒(または ⚙)をクリック</li>" +
+             "<li>「マイク」を「許可」に変更</li>" +
+             "<li>ページを再読み込みして、もう一度「マイクを許可」を押す</li></ol>";
+    }
+    note.innerHTML = body;
+    note.classList.remove("hide");
+  } else {
+    text.textContent = EMBEDDED
+      ? "マイクは未確認です(埋め込み表示では使えないことがあります)"
+      : "マイクはまだ許可されていません";
+  }
+}
 
 /* ---------- 分析 ---------- */
 function analyze(parts, dur, target) {
@@ -506,6 +607,16 @@ function setTarget(t) {
     b.setAttribute("aria-pressed", String(Number(b.dataset.t) === t)));
 }
 
+/* 練習に入る前に許可を取る。ダイアログの間タイマーが進まないよう、録音画面より先に出す */
+async function toRecChecked() {
+  const btn = $("begin"), label = btn.textContent;
+  btn.disabled = true; btn.textContent = "マイクを確認中…";
+  const r = await askMic();
+  btn.disabled = false; btn.textContent = label;
+  paintMic(r.ok ? "ok" : r.why === "pending" ? "wait" : "no", r.why);
+  if (r.ok) toRec();
+}
+
 function toRec() {
   $("asked").textContent = qOf(S.qid).text;
   $("goal").textContent = mmss(S.target);
@@ -542,7 +653,7 @@ function start() {
   r.onerror = (ev) => {
     if (ev.error === "not-allowed" || ev.error === "service-not-allowed") {
       S.on = false; clearInterval(S.tick);
-      $("mic-blocked").classList.remove("hide");
+      paintMic("no", "NotAllowedError");
       resetRec(); show("setup");
     }
   };
@@ -726,7 +837,14 @@ function boot() {
   armSetup();
   document.querySelectorAll(".navlinks button").forEach((b) =>
     b.addEventListener("click", () => show(b.dataset.view === "log" ? "log" : "setup")));
-  $("begin").addEventListener("click", toRec);
+  $("begin").addEventListener("click", toRecChecked);
+  $("micask").addEventListener("click", async () => {
+    const r = await askMic();
+    paintMic(r.ok ? "ok" : r.why === "pending" ? "wait" : "no", r.why);
+  });
+  // すでに許可済みならダイアログを出さずに緑にしておく
+  peekMic().then((st) =>
+    paintMic(st === "granted" ? "ok" : st === "denied" ? "no" : "unknown", "NotAllowedError"));
   $("rec").addEventListener("click", start);
   $("stop").addEventListener("click", stop);
   $("back").addEventListener("click", quit);
