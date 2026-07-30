@@ -286,7 +286,7 @@
     <!-- 1. 設定 -->
     <section class="view on" id="v-setup">
       <h2 class="title">質問を選んで、時間内に答える</h2>
-      <p class="sub">答え終えると、時間・話速・言いよどみ・一文の長さを測って返します。音声は端末のマイクから直接ブラウザの音声認識に渡され、このページが録音を保存することはありません。</p>
+      <p class="sub" id="sub-lead">答え終えると、時間・話速・言いよどみ・一文の長さを測って返します。音声は端末のマイクから直接ブラウザの音声認識に渡され、このページが録音を保存することはありません。</p>
 
       <div class="notice hide" id="no-sr">
         <b>このブラウザでは音声認識が使えません。</b><br>
@@ -346,12 +346,14 @@
       <h3 class="sec">直すとよい点</h3>
       <ol class="tips" id="tips"></ol>
 
-      <h3 class="sec">文字起こし</h3>
-      <div class="keyline">
-        <span><i style="background:var(--mark-filler);box-shadow:0 1px 0 var(--over)"></i>言いよどみ</span>
-        <span><i style="background:var(--mark-redundant);box-shadow:0 1px 0 var(--warn)"></i>冗長な言い回し</span>
+      <div id="script-block">
+        <h3 class="sec">文字起こし</h3>
+        <div class="keyline">
+          <span><i style="background:var(--mark-filler);box-shadow:0 1px 0 var(--over)"></i>言いよどみ</span>
+          <span><i style="background:var(--mark-redundant);box-shadow:0 1px 0 var(--warn)"></i>冗長な言い回し</span>
+        </div>
+        <div class="card script" id="script"></div>
       </div>
-      <div class="card script" id="script"></div>
 
       <div class="row">
         <button class="go" id="again">もう一度</button>
@@ -442,6 +444,8 @@ function show(v) {
 
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition || null;
 const EMBEDDED = (() => { try { return window.self !== window.top; } catch (_) { return true; } })();
+/* Safari・iPhone には日本語の音声認識がない。時間の計測だけに切り替えて動かす */
+const TIMING_ONLY = !SR;
 
 /* ---------- マイク許可 ----------
    録音開始時に暗黙で要求すると、拒否されるまで状態が分からない。
@@ -518,13 +522,51 @@ function paintMic(state, why) {
 }
 
 /* ---------- 分析 ---------- */
-function analyze(parts, dur, target) {
+
+/* 時間の減点は両モード共通なので切り出しておく */
+function timePenalty(ratio, tips) {
+  if (ratio > 1) {
+    const over = Math.round((ratio - 1) * 100);
+    if (over >= 50) tips.push(`目標を${over}%超過しています。まず結論を10秒で言い切り、理由と具体例を1つずつに絞りましょう。`);
+    else if (over >= 10) tips.push(`目標を${over}%超過しました。具体例を1つ削るだけで収まる長さです。`);
+    return Math.min(Math.round(over / 10) * 5, 40);
+  }
+  if (ratio < 0.4) {
+    tips.push("目標時間に対してかなり短めです。結論のあとに理由か具体例を1つ足すと、説得力が出ます。");
+    return Math.min(35, Math.round((0.4 - ratio) * 100));  // 短いほど大きく引く
+  }
+  return 0;
+}
+
+const MIN_SEC = 8;   // これ未満は回答とみなさない(押し間違い)
+
+function analyze(parts, dur, target, timingOnly) {
   const text = parts.join("。");
   const chars = text.replace(/[\s。、．，,.]/g, "").length;
   const min = Math.max(dur / 60, 1 / 60);
+  const ratio0 = dur / target;
+
+  // 音声認識のないブラウザ(Safari・iPhone など)では時間だけを見る
+  if (timingOnly) {
+    if (dur < MIN_SEC) {
+      return { timing: true, mute: true, reason: "回答が短すぎるため採点していません。",
+               text: "", chars: 0, rate: 0, fillers: null, fpm: 0, redundant: 0, avgSent: 0,
+               spans: [], dur, target, ratio: ratio0, score: null, grade: "–",
+               tips: ["「回答を始める」を押してから、実際に声に出して答え、終わったら「答え終えた」を押してください。"] };
+    }
+    const tips = [];
+    const score = Math.max(0, Math.min(100, 100 - timePenalty(ratio0, tips)));
+    if (!tips.length) tips.push("目標時間に収まっています。この長さの感覚を覚えておきましょう。");
+    tips.push("話速・言いよどみ・一文の長さも見るには、Chrome または Edge で開いてください。");
+    return { timing: true, mute: false, text: "", chars: 0, rate: 0, fillers: null, fpm: 0,
+             redundant: 0, avgSent: 0, spans: [], dur, target, ratio: ratio0,
+             score, grade: score >= 90 ? "S" : score >= 80 ? "A" : score >= 70 ? "B" : score >= 60 ? "C" : "D",
+             tips };
+  }
 
   if (chars < MIN_CHARS) {
-    return { mute: true, text, chars, rate: 0, fillers: 0, fpm: 0, redundant: 0,
+    return { timing: false, mute: true, reason: "音声を認識できませんでした。",
+             text, chars, rate: 0, fillers: 0, fpm: 0, redundant: 0,
              avgSent: 0, spans: [], dur, target, ratio: dur / target, score: null, grade: "–",
              tips: ["音声をほとんど認識できませんでした。マイクの使用を許可しているか確認し、マイクに近づいてはっきり話してみてください。",
                     "静かな場所で Chrome か Edge を使うと、認識の精度が上がります。"] };
@@ -541,19 +583,9 @@ function analyze(parts, dur, target) {
   const avgSent = sentences.length
     ? Math.round(sentences.reduce((a, s) => a + s.length, 0) / sentences.length) : 0;
 
-  const ratio = dur / target;
-  let score = 100;
+  const ratio = ratio0;
   const tips = [];
-
-  if (ratio > 1) {
-    const over = Math.round((ratio - 1) * 100);
-    score -= Math.min(Math.round(over / 10) * 5, 40);
-    if (over >= 50) tips.push(`目標を${over}%超過しています。まず結論を10秒で言い切り、理由と具体例を1つずつに絞りましょう。`);
-    else if (over >= 10) tips.push(`目標を${over}%超過しました。具体例を1つ削るだけで収まる長さです。`);
-  } else if (ratio < 0.4) {
-    score -= 10;
-    tips.push("目標時間に対してかなり短めです。結論のあとに理由か具体例を1つ足すと、説得力が出ます。");
-  }
+  let score = 100 - timePenalty(ratio, tips);
 
   if (fpm > 6) { score -= 20;
     tips.push(`言いよどみが1分あたり${fpm.toFixed(1)}回とかなり多めです。「えーと」が出そうになったら、黙って1拍おく練習をしましょう。短い沈黙はフィラーよりずっと印象が良いです。`); }
@@ -584,7 +616,7 @@ function analyze(parts, dur, target) {
   if (!tips.length) tips.push("時間・話速・言いよどみのバランスが取れています。この感覚を体で覚えるため、別の質問でも試してみましょう。");
   const grade = score >= 90 ? "S" : score >= 80 ? "A" : score >= 70 ? "B" : score >= 60 ? "C" : "D";
 
-  return { mute:false, text, chars, rate, fillers, fpm, redundant, avgSent, spans, dur, target, ratio, score, grade, tips };
+  return { timing:false, mute:false, text, chars, rate, fillers, fpm, redundant, avgSent, spans, dur, target, ratio, score, grade, tips };
 }
 
 /* ---------- 録音 ---------- */
@@ -599,7 +631,18 @@ function armSetup() {
   });
   setTarget(S.target);
 
-  if (!SR) { $("no-sr").classList.remove("hide"); $("begin").disabled = true; }
+  // 音声認識がなくても時間の計測はできる。ボタンは止めず、できることを伝える
+  if (TIMING_ONLY) {
+    $("no-sr").innerHTML =
+      "<b>このブラウザでは音声認識が使えません。</b>" +
+      "時間の計測だけを行います(マイクは使いません)。" +
+      "文字起こし・言いよどみ・話速まで見るには、パソコンの Chrome または Edge で開いてください。";
+    $("no-sr").classList.remove("hide");
+    $("micbar").classList.add("hide");
+    $("live").classList.add("hide");
+    $("sub-lead").textContent =
+      "答え終えると、目標時間に対してどれだけ長かったかを測って返します。";
+  }
 }
 function setTarget(t) {
   S.target = t;
@@ -609,6 +652,7 @@ function setTarget(t) {
 
 /* 練習に入る前に許可を取る。ダイアログの間タイマーが進まないよう、録音画面より先に出す */
 async function toRecChecked() {
+  if (TIMING_ONLY) { toRec(); return; }   // マイクを使わないので許可も要らない
   const btn = $("begin"), label = btn.textContent;
   btn.disabled = true; btn.textContent = "マイクを確認中…";
   const r = await askMic();
@@ -630,9 +674,21 @@ function resetRec() {
   $("rec").classList.remove("hide"); $("stop").classList.add("hide");
 }
 
+function runClock() {
+  $("rec").classList.add("hide"); $("stop").classList.remove("hide");
+  S.tick = setInterval(() => {
+    const s = (Date.now() - S.t0) / 1000;
+    $("clock").textContent = mmss(s);
+    const past = s > S.target;
+    $("clock").classList.toggle("past", past);
+    $("rail").style.width = Math.min((s / S.target) * 100, 100) + "%";
+    $("rail").classList.toggle("past", past);
+  }, 200);
+}
+
 function start() {
-  if (!SR) return;
   S.parts = []; S.interim = ""; S.on = true; S.t0 = Date.now();
+  if (TIMING_ONLY) { runClock(); return; }
 
   const r = new SR();
   r.lang = "ja-JP"; r.continuous = true; r.interimResults = true;
@@ -659,16 +715,7 @@ function start() {
   };
   S.rec = r;
   try { r.start(); } catch (_) {}
-
-  $("rec").classList.add("hide"); $("stop").classList.remove("hide");
-  S.tick = setInterval(() => {
-    const s = (Date.now() - S.t0) / 1000;
-    $("clock").textContent = mmss(s);
-    const past = s > S.target;
-    $("clock").classList.toggle("past", past);
-    $("rail").style.width = Math.min((s / S.target) * 100, 100) + "%";
-    $("rail").classList.toggle("past", past);
-  }, 200);
+  runClock();
 }
 
 function stop() {
@@ -677,13 +724,15 @@ function stop() {
   clearInterval(S.tick);
   const dur = (Date.now() - S.t0) / 1000;
   if (S.rec) { try { S.rec.stop(); } catch (_) {} }
-  setTimeout(() => {
+  const finish = () => {
     if (S.interim.trim()) { S.parts.push(S.interim.trim()); S.interim = ""; }
-    const r = analyze(S.parts, dur, S.target);
+    const r = analyze(S.parts, dur, S.target, TIMING_ONLY);
     if (!r.mute) save(r);          // 認識できなかった回は記録に残さない
     report(r);
     show("report");
-  }, 600);
+  };
+  // 認識結果の確定を待つ必要があるのは音声認識モードだけ
+  if (TIMING_ONLY) finish(); else setTimeout(finish, 600);
 }
 
 function quit() {
@@ -698,9 +747,10 @@ function report(r) {
   $("grade").textContent = r.mute ? "採点不可" : `評価 ${r.grade}`;
 
   if (r.mute) {
-    $("verdict").innerHTML = "<b>音声を認識できませんでした。</b><br>この回は記録に残していません。";
+    $("verdict").innerHTML = `<b>${esc(r.reason)}</b><br>この回は記録に残していません。`;
     $("readout").innerHTML = "";
     $("tips").innerHTML = r.tips.map((t) => `<li>${esc(t)}</li>`).join("");
+    $("script-block").classList.toggle("hide", !!r.timing);
     $("script").innerHTML = '<span style="color:var(--muted)">(認識された言葉がありません)</span>';
     return;
   }
@@ -715,9 +765,22 @@ function report(r) {
   const cell = (k, v, n, flag) =>
     `<div class="cell"${flag ? ` data-flag="${flag}"` : ""}><div class="k">${k}</div><div class="v">${v}</div><div class="n">${n}</div></div>`;
 
+  const timeCell = cell("時間", mmss(r.dur), `目標 ${mmss(r.target)}`,
+    r.ratio > 1.3 ? "over" : (r.ratio <= 1.1 && r.ratio >= 0.4 ? "good" : ""));
+
+  // 時間計測のみのモードでは、測っていない項目の枠を出さない
+  if (r.timing) {
+    $("readout").innerHTML = timeCell +
+      cell("超過率", `${over > 0 ? "+" : ""}${over}<span style="font-size:13px;font-weight:400">%</span>`,
+        "0% が目標ぴったり", over > 30 ? "over" : (over <= 10 && over >= -60 ? "good" : ""));
+    $("tips").innerHTML = r.tips.map((t) => `<li>${esc(t)}</li>`).join("");
+    $("script-block").classList.add("hide");
+    return;
+  }
+  $("script-block").classList.remove("hide");
+
   $("readout").innerHTML = [
-    cell("時間", mmss(r.dur), `目標 ${mmss(r.target)}`,
-      r.ratio > 1.3 ? "over" : (r.ratio <= 1.1 && r.ratio >= 0.4 ? "good" : "")),
+    timeCell,
     cell("話速", `${r.rate}<span style="font-size:13px;font-weight:400">字/分</span>`, "目安 250〜350",
       r.rate > 450 ? "over" : (r.rate >= 250 && r.rate <= 350 ? "good" : "")),
     cell("言いよどみ", `${r.fillers}<span style="font-size:13px;font-weight:400">回</span>`,
@@ -770,7 +833,7 @@ function drawLog() {
       <td>${esc(q.length > 12 ? q.slice(0,12) + "…" : q)}</td>
       <td class="n${over ? " over" : ""}">${mmss(h.dur)}</td>
       <td class="n">${mmss(h.target)}</td>
-      <td class="n">${h.fillers}</td>
+      <td class="n">${h.fillers == null ? "—" : h.fillers}</td>
       <td class="n">${h.score}</td>
     </tr>`;
   }).join("");
