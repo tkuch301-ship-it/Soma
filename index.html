@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Soma — 面接トーク練習</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🎙️</text></svg>">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<header class="app-header">
+  <h1 class="brand">Soma<span class="brand-sub">面接トーク練習</span></h1>
+  <nav class="tabs">
+    <button class="tab active" data-screen="home">練習する</button>
+    <button class="tab" data-screen="history">履歴</button>
+  </nav>
+</header>
+
+<main>
+  <!-- ホーム:質問と目標時間の選択 -->
+  <section id="screen-home" class="screen active">
+    <p class="lead">質問を選んで、目標時間内に答える練習をしましょう。<br>録音は端末内で処理され、外部には送信されません。</p>
+    <div id="sr-warning" class="warning hidden">
+      ⚠️ このブラウザは音声認識(Web Speech API)に対応していません。Chrome または Edge をお使いください。
+    </div>
+    <div class="field">
+      <label for="question-select">質問</label>
+      <select id="question-select"></select>
+    </div>
+    <div class="field">
+      <label>目標時間</label>
+      <div class="target-buttons" id="target-buttons"></div>
+    </div>
+    <button id="btn-start" class="primary big">この質問で練習を始める</button>
+  </section>
+
+  <!-- 練習:録音画面 -->
+  <section id="screen-practice" class="screen">
+    <p class="question-label">質問</p>
+    <h2 id="practice-question" class="question-text"></h2>
+    <div class="timer-wrap">
+      <div class="timer" id="timer-display">0:00</div>
+      <div class="timer-target">目標 <span id="timer-target-label"></span></div>
+      <div class="timer-bar"><div class="timer-bar-fill" id="timer-bar-fill"></div></div>
+    </div>
+    <div class="rec-controls">
+      <button id="btn-record" class="primary big">🎙️ 回答を始める</button>
+      <button id="btn-stop" class="danger big hidden">⏹ 回答を終える</button>
+      <button id="btn-cancel" class="ghost">やめて戻る</button>
+    </div>
+    <div class="transcript-live" id="transcript-live" aria-live="polite"></div>
+    <p class="note">※ 音声認識は「えー」などの言いよどみを一部拾えないことがあります。数値は目安として使ってください。</p>
+  </section>
+
+  <!-- 結果 -->
+  <section id="screen-result" class="screen">
+    <div class="result-head">
+      <div class="score-tile">
+        <div class="score-value" id="result-score">–</div>
+        <div class="score-grade" id="result-grade">–</div>
+      </div>
+      <div class="result-summary" id="result-summary"></div>
+    </div>
+    <div class="metrics" id="result-metrics"></div>
+    <h3>アドバイス</h3>
+    <ul class="advice" id="result-advice"></ul>
+    <h3>文字起こし <span class="hint">(フィラー語・冗長表現をハイライト)</span></h3>
+    <div class="transcript-final" id="result-transcript"></div>
+    <div class="result-actions">
+      <button id="btn-retry" class="primary">同じ質問でもう一度</button>
+      <button id="btn-home" class="ghost">質問を選び直す</button>
+    </div>
+  </section>
+
+  <!-- 履歴 -->
+  <section id="screen-history" class="screen">
+    <h2>練習の記録</h2>
+    <div id="history-empty" class="empty hidden">まだ記録がありません。まずは1回練習してみましょう。</div>
+    <div id="history-content">
+      <div class="viz-root">
+        <p class="viz-title">スコアの推移</p>
+        <div id="history-chart"></div>
+        <div id="chart-tooltip" class="chart-tooltip hidden"></div>
+      </div>
+      <table class="history-table" id="history-table">
+        <thead>
+          <tr><th>日時</th><th>質問</th><th>時間</th><th>目標</th><th>フィラー</th><th>スコア</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <button id="btn-clear-history" class="ghost small">履歴をすべて削除</button>
+    </div>
+  </section>
+</main>
+
+<script src="js/app.js"></script>
+</body>
+</html>
