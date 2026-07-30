@@ -3,96 +3,746 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Soma — 面接トーク練習</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🎙️</text></svg>">
-<link rel="stylesheet" href="css/style.css">
+<style>*{margin:0;padding:0}</style>
 </head>
 <body>
-<header class="app-header">
-  <h1 class="brand">Soma<span class="brand-sub">面接トーク練習</span></h1>
-  <nav class="tabs">
-    <button class="tab active" data-screen="home">練習する</button>
-    <button class="tab" data-screen="history">履歴</button>
-  </nav>
-</header>
+<title>Soma — 面接トーク練習</title>
+<style>
+  :root {
+    color-scheme: light;
+    --paper:      #f7f6f3;
+    --surface:    #fdfdfb;
+    --ink:        #141a19;
+    --ink-2:      #4c5450;
+    --muted:      #7b827d;
+    --rule:       #e2e2dc;
+    --hairline:   rgba(20, 26, 25, 0.10);
+    --accent:     #008872;
+    --accent-ink: #00614f;
+    --over:       #c2410c;
+    --warn:       #9a6b00;
+    --mark-filler:    rgba(194, 65, 12, 0.14);
+    --mark-redundant: rgba(154, 107, 0, 0.16);
+    --shadow: 0 1px 2px rgba(20,26,25,.05), 0 6px 20px rgba(20,26,25,.05);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --paper:      #101312;
+      --surface:    #15181a;
+      --ink:        #f2f3f0;
+      --ink-2:      #b9c0ba;
+      --muted:      #868d88;
+      --rule:       #272b2a;
+      --hairline:   rgba(242, 243, 240, 0.12);
+      --accent:     #22a48b;
+      --accent-ink: #3fbfa4;
+      --over:       #e08a5a;
+      --warn:       #d8a63c;
+      --mark-filler:    rgba(224, 138, 90, 0.20);
+      --mark-redundant: rgba(216, 166, 60, 0.18);
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 6px 20px rgba(0,0,0,.25);
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --paper:      #101312;
+    --surface:    #15181a;
+    --ink:        #f2f3f0;
+    --ink-2:      #b9c0ba;
+    --muted:      #868d88;
+    --rule:       #272b2a;
+    --hairline:   rgba(242, 243, 240, 0.12);
+    --accent:     #22a48b;
+    --accent-ink: #3fbfa4;
+    --over:       #e08a5a;
+    --warn:       #d8a63c;
+    --mark-filler:    rgba(224, 138, 90, 0.20);
+    --mark-redundant: rgba(216, 166, 60, 0.18);
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 6px 20px rgba(0,0,0,.25);
+  }
 
-<main>
-  <!-- ホーム:質問と目標時間の選択 -->
-  <section id="screen-home" class="screen active">
-    <p class="lead">質問を選んで、目標時間内に答える練習をしましょう。<br>録音は端末内で処理され、外部には送信されません。</p>
-    <div id="sr-warning" class="warning hidden">
-      ⚠️ このブラウザは音声認識(Web Speech API)に対応していません。Chrome または Edge をお使いください。
-    </div>
-    <div class="field">
-      <label for="question-select">質問</label>
-      <select id="question-select"></select>
-    </div>
-    <div class="field">
-      <label>目標時間</label>
-      <div class="target-buttons" id="target-buttons"></div>
-    </div>
-    <button id="btn-start" class="primary big">この質問で練習を始める</button>
-  </section>
+  * { box-sizing: border-box; }
+  .app {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Yu Gothic Medium",
+                 "Yu Gothic", Meiryo, system-ui, -apple-system, sans-serif;
+    line-height: 1.7;
+    min-height: 100vh;
+    font-size: 16px;
+  }
+  .app :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
 
-  <!-- 練習:録音画面 -->
-  <section id="screen-practice" class="screen">
-    <p class="question-label">質問</p>
-    <h2 id="practice-question" class="question-text"></h2>
-    <div class="timer-wrap">
-      <div class="timer" id="timer-display">0:00</div>
-      <div class="timer-target">目標 <span id="timer-target-label"></span></div>
-      <div class="timer-bar"><div class="timer-bar-fill" id="timer-bar-fill"></div></div>
-    </div>
-    <div class="rec-controls">
-      <button id="btn-record" class="primary big">🎙️ 回答を始める</button>
-      <button id="btn-stop" class="danger big hidden">⏹ 回答を終える</button>
-      <button id="btn-cancel" class="ghost">やめて戻る</button>
-    </div>
-    <div class="transcript-live" id="transcript-live" aria-live="polite"></div>
-    <p class="note">※ 音声認識は「えー」などの言いよどみを一部拾えないことがあります。数値は目安として使ってください。</p>
-  </section>
+  /* ---- header ---- */
+  .masthead {
+    display: flex; align-items: baseline; justify-content: space-between;
+    flex-wrap: wrap; gap: 12px;
+    max-width: 640px; margin: 0 auto; padding: 26px 20px 18px;
+  }
+  .wordmark { display: flex; align-items: baseline; gap: 12px; }
+  .wordmark b {
+    font-size: 21px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase;
+  }
+  .wordmark span {
+    font-size: 12px; color: var(--muted); letter-spacing: .1em;
+  }
+  .navlinks { display: flex; gap: 4px; }
+  .navlinks button {
+    font: inherit; font-size: 13px; padding: 5px 12px;
+    background: none; border: 1px solid transparent; border-radius: 999px;
+    color: var(--muted); cursor: pointer;
+  }
+  .navlinks button:hover { color: var(--ink); }
+  .navlinks button[aria-current="true"] {
+    color: var(--accent-ink); border-color: var(--accent); font-weight: 700;
+  }
 
-  <!-- 結果 -->
-  <section id="screen-result" class="screen">
-    <div class="result-head">
-      <div class="score-tile">
-        <div class="score-value" id="result-score">–</div>
-        <div class="score-grade" id="result-grade">–</div>
+  .sheet { max-width: 640px; margin: 0 auto; padding: 0 20px 80px; }
+  .view { display: none; }
+  .view.on { display: block; }
+  .hide { display: none !important; }
+
+  h2.title { font-size: 19px; margin: 0 0 6px; letter-spacing: .01em; }
+  p.sub { color: var(--ink-2); font-size: 14px; margin: 0 0 22px; }
+
+  .label {
+    font-size: 11px; letter-spacing: .14em; text-transform: uppercase;
+    color: var(--muted); font-weight: 700; margin-bottom: 8px;
+  }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--hairline);
+    border-radius: 10px; box-shadow: var(--shadow);
+  }
+
+  /* ---- setup ---- */
+  .group { margin-bottom: 24px; }
+  select.q {
+    width: 100%; font: inherit; font-size: 15px; padding: 12px 14px;
+    background: var(--surface); color: var(--ink);
+    border: 1px solid var(--hairline); border-radius: 8px;
+  }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; }
+  .chips button {
+    font: inherit; font-size: 14px; font-variant-numeric: tabular-nums;
+    flex: 1 1 64px; padding: 11px 0;
+    background: var(--surface); color: var(--ink-2);
+    border: 1px solid var(--hairline); border-radius: 8px; cursor: pointer;
+  }
+  .chips button[aria-pressed="true"] {
+    background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 700;
+  }
+
+  button.go, button.halt, button.quiet {
+    font: inherit; border-radius: 8px; cursor: pointer; padding: 13px 22px; font-size: 16px;
+    border: 1px solid transparent; width: 100%;
+  }
+  button.go { background: var(--accent); color: #fff; font-weight: 700; }
+  button.go:disabled { opacity: .45; cursor: not-allowed; }
+  button.halt { background: var(--over); color: #fff; font-weight: 700; }
+  button.quiet { background: none; color: var(--ink-2); border-color: var(--hairline); }
+  .row { display: flex; gap: 10px; }
+  .row > button { width: auto; flex: 1; }
+
+  .notice {
+    border-left: 3px solid var(--warn); background: var(--mark-redundant);
+    padding: 12px 14px; border-radius: 0 8px 8px 0; font-size: 14px; margin-bottom: 20px;
+  }
+  .fine { color: var(--muted); font-size: 12.5px; line-height: 1.6; }
+
+  /* ---- the instrument: timer ---- */
+  .prompt-q {
+    font-size: 21px; font-weight: 700; margin: 4px 0 22px;
+    text-wrap: balance; line-height: 1.5;
+  }
+  .instrument { padding: 22px 20px 20px; text-align: center; margin-bottom: 20px; }
+  .clock {
+    font-size: 58px; font-weight: 700; line-height: 1;
+    font-variant-numeric: tabular-nums; letter-spacing: -.02em;
+  }
+  .clock.past { color: var(--over); }
+  .clock-meta {
+    font-size: 12px; color: var(--muted); letter-spacing: .08em;
+    margin: 8px 0 14px; font-variant-numeric: tabular-nums;
+  }
+  .rail { height: 6px; background: var(--rule); border-radius: 3px; overflow: hidden; }
+  .rail > i {
+    display: block; height: 100%; width: 0%;
+    background: var(--accent); border-radius: 3px; transition: width .2s linear;
+  }
+  .rail > i.past { background: var(--over); }
+
+  .livebox {
+    padding: 14px 16px; min-height: 92px; font-size: 15px; color: var(--ink-2);
+    margin-top: 18px; max-height: 200px; overflow-y: auto;
+  }
+  .livebox:empty::before { content: "話し始めると、ここに文字起こしが出ます。"; color: var(--muted); }
+
+  /* ---- report ---- */
+  .verdict { display: flex; gap: 16px; align-items: stretch; margin-bottom: 20px; }
+  .scorebox {
+    flex: 0 0 116px; padding: 16px 10px; text-align: center;
+    display: flex; flex-direction: column; justify-content: center;
+  }
+  .scorebox .n { font-size: 46px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+  .scorebox .g { font-size: 11px; letter-spacing: .12em; color: var(--muted); margin-top: 6px; font-weight: 700; }
+  .verdict-text { align-self: center; font-size: 15px; }
+  .verdict-text b { font-variant-numeric: tabular-nums; }
+
+  .readout { display: grid; grid-template-columns: repeat(auto-fit, minmax(148px, 1fr)); gap: 1px;
+             background: var(--hairline); border: 1px solid var(--hairline);
+             border-radius: 10px; overflow: hidden; margin-bottom: 26px; }
+  .cell { background: var(--surface); padding: 13px 15px; }
+  .cell .k { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); font-weight: 700; }
+  .cell .v { font-size: 23px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.3; }
+  .cell .n { font-size: 12px; color: var(--ink-2); }
+  .cell[data-flag="over"] .v { color: var(--over); }
+  .cell[data-flag="good"] .v { color: var(--accent-ink); }
+  .cell[data-flag="over"] .k::after { content: " ▲"; }
+  .cell[data-flag="good"] .k::after { content: " ●"; }
+
+  h3.sec { font-size: 13px; letter-spacing: .12em; text-transform: uppercase;
+           color: var(--muted); margin: 0 0 10px; font-weight: 700; }
+  h3.sec em { font-style: normal; text-transform: none; letter-spacing: 0; font-weight: 400; }
+  ol.tips { margin: 0 0 26px; padding-left: 22px; }
+  ol.tips li { margin-bottom: 10px; font-size: 15px; }
+  ol.tips li::marker { color: var(--accent); font-weight: 700; }
+  .script { padding: 15px 17px; font-size: 15px; margin-bottom: 26px; }
+  .script mark { border-radius: 3px; padding: 1px 0; color: inherit; }
+  .script mark.filler { background: var(--mark-filler); box-shadow: 0 1px 0 var(--over); }
+  .script mark.redundant { background: var(--mark-redundant); box-shadow: 0 1px 0 var(--warn); }
+  .keyline { display: flex; gap: 16px; font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+  .keyline span { display: flex; align-items: center; gap: 6px; }
+  .keyline i { width: 11px; height: 11px; border-radius: 2px; display: inline-block; }
+
+  /* ---- log ---- */
+  .plotcard { padding: 16px; margin-bottom: 22px; position: relative; }
+  .plotcard .cap { font-size: 12px; color: var(--muted); margin: 0 0 4px; letter-spacing: .06em; }
+  #plot { overflow-x: auto; }
+  #plot svg { display: block; }
+  .tip {
+    position: absolute; pointer-events: none; z-index: 4;
+    background: var(--surface); border: 1px solid var(--hairline); border-radius: 7px;
+    padding: 7px 10px; font-size: 12px; line-height: 1.5; box-shadow: var(--shadow); white-space: nowrap;
+  }
+  .tbl-wrap { overflow-x: auto; margin-bottom: 18px; }
+  /* 幅が足りないときは列を潰さず、この枠の中だけ横スクロールさせる */
+  table.log { width: 100%; min-width: 460px; border-collapse: collapse; font-size: 13.5px; }
+  table.log td:nth-child(2) { white-space: nowrap; }
+  table.log th {
+    text-align: left; font-size: 11px; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--muted); padding: 6px 10px; border-bottom: 1px solid var(--rule); white-space: nowrap;
+  }
+  table.log td { padding: 9px 10px; border-bottom: 1px solid var(--rule); }
+  table.log td.n { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  table.log td.over { color: var(--over); }
+  .blank { color: var(--ink-2); padding: 30px 0; font-size: 15px; }
+
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+  @media (max-width: 460px) {
+    .clock { font-size: 48px; }
+    .prompt-q { font-size: 19px; }
+    .verdict { flex-direction: column; gap: 12px; }
+    .scorebox { flex: none; flex-direction: row; gap: 14px; justify-content: center; align-items: baseline; }
+    .scorebox .g { margin-top: 0; }
+  }
+</style>
+
+<div class="app">
+  <header class="masthead">
+    <div class="wordmark"><b>Soma</b><span>面接トーク練習</span></div>
+    <nav class="navlinks">
+      <button data-view="setup" aria-current="true">練習</button>
+      <button data-view="log" aria-current="false">記録</button>
+    </nav>
+  </header>
+
+  <div class="sheet">
+    <!-- 1. 設定 -->
+    <section class="view on" id="v-setup">
+      <h2 class="title">質問を選んで、時間内に答える</h2>
+      <p class="sub">答え終えると、時間・話速・言いよどみ・一文の長さを測って返します。音声は端末のマイクから直接ブラウザの音声認識に渡され、このページが録音を保存することはありません。</p>
+
+      <div class="notice hide" id="no-sr">
+        <b>このブラウザでは音声認識が使えません。</b><br>
+        Chrome または Edge で開くと動きます(Safari・Firefox は日本語の音声認識に未対応です)。
       </div>
-      <div class="result-summary" id="result-summary"></div>
-    </div>
-    <div class="metrics" id="result-metrics"></div>
-    <h3>アドバイス</h3>
-    <ul class="advice" id="result-advice"></ul>
-    <h3>文字起こし <span class="hint">(フィラー語・冗長表現をハイライト)</span></h3>
-    <div class="transcript-final" id="result-transcript"></div>
-    <div class="result-actions">
-      <button id="btn-retry" class="primary">同じ質問でもう一度</button>
-      <button id="btn-home" class="ghost">質問を選び直す</button>
-    </div>
-  </section>
-
-  <!-- 履歴 -->
-  <section id="screen-history" class="screen">
-    <h2>練習の記録</h2>
-    <div id="history-empty" class="empty hidden">まだ記録がありません。まずは1回練習してみましょう。</div>
-    <div id="history-content">
-      <div class="viz-root">
-        <p class="viz-title">スコアの推移</p>
-        <div id="history-chart"></div>
-        <div id="chart-tooltip" class="chart-tooltip hidden"></div>
+      <div class="notice hide" id="mic-blocked">
+        <b>マイクを使えませんでした。</b><br>
+        埋め込み表示ではマイクがブロックされることがあります。このページを<b>新しいタブで開く</b>と使えます。
       </div>
-      <table class="history-table" id="history-table">
-        <thead>
-          <tr><th>日時</th><th>質問</th><th>時間</th><th>目標</th><th>フィラー</th><th>スコア</th></tr>
-        </thead>
-        <tbody></tbody>
-      </table>
-      <button id="btn-clear-history" class="ghost small">履歴をすべて削除</button>
-    </div>
-  </section>
-</main>
 
-<script src="js/app.js"></script>
+      <div class="group">
+        <div class="label">質問</div>
+        <select class="q" id="pick"></select>
+      </div>
+      <div class="group">
+        <div class="label">目標時間</div>
+        <div class="chips" id="targets"></div>
+      </div>
+      <button class="go" id="begin">この質問で練習する</button>
+    </section>
+
+    <!-- 2. 録音 -->
+    <section class="view" id="v-rec">
+      <div class="label">質問</div>
+      <p class="prompt-q" id="asked"></p>
+
+      <div class="card instrument">
+        <div class="clock" id="clock">0:00</div>
+        <div class="clock-meta">目標 <span id="goal"></span></div>
+        <div class="rail"><i id="rail"></i></div>
+      </div>
+
+      <div class="row" style="margin-bottom:12px">
+        <button class="go" id="rec">● 回答を始める</button>
+        <button class="halt hide" id="stop">■ 答え終えた</button>
+      </div>
+      <button class="quiet" id="back">質問を選び直す</button>
+
+      <div class="card livebox" id="live" aria-live="polite"></div>
+      <p class="fine" style="margin-top:14px">音声認識は「えー」などの言いよどみを取りこぼすことがあります。数値は目安として使ってください。</p>
+    </section>
+
+    <!-- 3. 結果 -->
+    <section class="view" id="v-report">
+      <div class="verdict">
+        <div class="card scorebox">
+          <div class="n" id="score">–</div>
+          <div class="g" id="grade">–</div>
+        </div>
+        <div class="verdict-text" id="verdict"></div>
+      </div>
+      <div class="readout" id="readout"></div>
+
+      <h3 class="sec">直すとよい点</h3>
+      <ol class="tips" id="tips"></ol>
+
+      <h3 class="sec">文字起こし</h3>
+      <div class="keyline">
+        <span><i style="background:var(--mark-filler);box-shadow:0 1px 0 var(--over)"></i>言いよどみ</span>
+        <span><i style="background:var(--mark-redundant);box-shadow:0 1px 0 var(--warn)"></i>冗長な言い回し</span>
+      </div>
+      <div class="card script" id="script"></div>
+
+      <div class="row">
+        <button class="go" id="again">もう一度</button>
+        <button class="quiet" id="other">別の質問</button>
+      </div>
+    </section>
+
+    <!-- 4. 記録 -->
+    <section class="view" id="v-log">
+      <h2 class="title">練習の記録</h2>
+      <p class="sub">この端末のブラウザ内にだけ保存されます。</p>
+      <div class="blank hide" id="log-blank">まだ記録がありません。1回練習すると、ここにスコアの推移が出ます。</div>
+      <div id="log-body">
+        <div class="card plotcard">
+          <p class="cap">スコアの推移(直近30回・100点満点)</p>
+          <div id="plot"></div>
+          <div class="tip hide" id="tip"></div>
+        </div>
+        <div class="tbl-wrap">
+          <table class="log">
+            <thead><tr><th>日時</th><th>質問</th><th>時間</th><th>目標</th><th>言いよどみ</th><th>スコア</th></tr></thead>
+            <tbody id="log-rows"></tbody>
+          </table>
+        </div>
+        <button class="quiet" id="wipe" style="width:auto;font-size:13px;padding:8px 16px">記録を消す</button>
+      </div>
+    </section>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+const QUESTIONS = [
+  { id: "self-intro", text: "自己紹介をお願いします。", t: 60 },
+  { id: "gakuchika",  text: "学生時代に力を入れたことを教えてください。", t: 90 },
+  { id: "motivation", text: "当社を志望する理由を教えてください。", t: 60 },
+  { id: "strength",   text: "あなたの強みを教えてください。", t: 60 },
+  { id: "weakness",   text: "あなたの弱みを教えてください。", t: 60 },
+  { id: "failure",    text: "挫折した経験と、そこから学んだことを教えてください。", t: 90 },
+  { id: "teamwork",   text: "チームで成果を出した経験を教えてください。", t: 90 },
+  { id: "vision",     text: "入社後にやりたいことを教えてください。", t: 60 },
+  { id: "pr",         text: "1分間で自己PRをしてください。", t: 60 },
+];
+const TARGETS = [30, 60, 90, 120];
+
+const FILLERS = ["えーと","えっと","ええと","えー","あのー","あのう","あの","そのー","んーと","うーん",
+                 "まあ","まぁ","なんか","やっぱり","やっぱ","とりあえず"];
+const REDUNDANTS = ["という形で","というふうに","という風に","といったような","させていただき","させていただく",
+                    "させていただいて","だと思っていて","かなと思って","かなというふうに","個人的には",
+                    "どちらかというと","逆に言うと","のような形","することができ","ということなんですけど",
+                    "なんですけれども","のほうを","的な感じで"];
+const MIN_CHARS = 12;
+const KEY = "soma-log-v1";
+
+const S = { qid: QUESTIONS[0].id, target: 60, on: false, t0: 0, tick: null,
+            parts: [], interim: "", rec: null };
+
+const $ = (id) => document.getElementById(id);
+const mmss = (s) => `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,"0")}`;
+const qOf = (id) => QUESTIONS.find((q) => q.id === id) || QUESTIONS[0];
+const esc = (s) => s.replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+/* フィラーと冗長表現を1回のスキャンで検出。長い語を優先し、重なりは数えない
+   (「あのー」を「あの」と、「やっぱり」を「やっぱ」と二重に数えないため) */
+const PATTERNS = [...FILLERS.map((p) => ({p, cls:"filler"})),
+                  ...REDUNDANTS.map((p) => ({p, cls:"redundant"}))].sort((a,b) => b.p.length - a.p.length);
+function findSpans(text) {
+  const out = []; let i = 0;
+  while (i < text.length) {
+    let hit = null;
+    for (const {p, cls} of PATTERNS) { if (text.startsWith(p, i)) { hit = {start:i, end:i+p.length, cls}; break; } }
+    if (hit) { out.push(hit); i = hit.end; } else { i++; }
+  }
+  return out;
+}
+
+function show(v) {
+  document.querySelectorAll(".view").forEach((el) => el.classList.remove("on"));
+  $("v-" + v).classList.add("on");
+  document.querySelectorAll(".navlinks button").forEach((b) => {
+    const cur = (b.dataset.view === "log" && v === "log") || (b.dataset.view === "setup" && v !== "log");
+    b.setAttribute("aria-current", String(cur));
+  });
+  if (v === "log") drawLog();
+  window.scrollTo(0, 0);
+}
+
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition || null;
+
+/* ---------- 分析 ---------- */
+function analyze(parts, dur, target) {
+  const text = parts.join("。");
+  const chars = text.replace(/[\s。、．，,.]/g, "").length;
+  const min = Math.max(dur / 60, 1 / 60);
+
+  if (chars < MIN_CHARS) {
+    return { mute: true, text, chars, rate: 0, fillers: 0, fpm: 0, redundant: 0,
+             avgSent: 0, spans: [], dur, target, ratio: dur / target, score: null, grade: "–",
+             tips: ["音声をほとんど認識できませんでした。マイクの使用を許可しているか確認し、マイクに近づいてはっきり話してみてください。",
+                    "静かな場所で Chrome か Edge を使うと、認識の精度が上がります。"] };
+  }
+
+  const rate = Math.round(chars / min);
+  const spans = findSpans(text);
+  const fillers = spans.filter((s) => s.cls === "filler").length;
+  const redundant = spans.filter((s) => s.cls === "redundant").length;
+  const fpm = fillers / min;
+
+  let sentences = text.split(/[。!?!?]/).map((s) => s.trim()).filter(Boolean);
+  if (sentences.length <= 1 && parts.length > 1) sentences = parts;
+  const avgSent = sentences.length
+    ? Math.round(sentences.reduce((a, s) => a + s.length, 0) / sentences.length) : 0;
+
+  const ratio = dur / target;
+  let score = 100;
+  const tips = [];
+
+  if (ratio > 1) {
+    const over = Math.round((ratio - 1) * 100);
+    score -= Math.min(Math.round(over / 10) * 5, 40);
+    if (over >= 50) tips.push(`目標を${over}%超過しています。まず結論を10秒で言い切り、理由と具体例を1つずつに絞りましょう。`);
+    else if (over >= 10) tips.push(`目標を${over}%超過しました。具体例を1つ削るだけで収まる長さです。`);
+  } else if (ratio < 0.4) {
+    score -= 10;
+    tips.push("目標時間に対してかなり短めです。結論のあとに理由か具体例を1つ足すと、説得力が出ます。");
+  }
+
+  if (fpm > 6) { score -= 20;
+    tips.push(`言いよどみが1分あたり${fpm.toFixed(1)}回とかなり多めです。「えーと」が出そうになったら、黙って1拍おく練習をしましょう。短い沈黙はフィラーよりずっと印象が良いです。`); }
+  else if (fpm > 3) { score -= 12;
+    tips.push(`言いよどみがやや多め(1分あたり${fpm.toFixed(1)}回)です。文の切れ目で一呼吸おく意識を持つと減らせます。`); }
+  else if (fpm > 1.5) { score -= 5; }
+
+  if (redundant >= 4) { score -= 10;
+    tips.push("「〜という形で」「〜だと思っていて」のような回りくどい言い回しが目立ちます。言い切る形(「〜です」「〜しました」)に置き換えると引き締まります。"); }
+  else if (redundant >= 2) { score -= 5;
+    tips.push("回りくどい言い回しがいくつかあります。ハイライトした箇所を短い言い切りに変えられないか見てみましょう。"); }
+
+  if (avgSent > 80) { score -= 10;
+    tips.push(`一文が平均${avgSent}文字と長すぎます。1文に情報は1つ。60文字を目安に区切りましょう。`); }
+  else if (avgSent > 60) { score -= 5;
+    tips.push(`一文がやや長め(平均${avgSent}文字)です。「〜で、〜で、」と続けず、いったん切る癖をつけましょう。`); }
+
+  if (chars > 20) {
+    if (rate > 450) { score -= 10;
+      tips.push(`話速が${rate}字/分とかなり速めです。詰め込むより、内容を減らしてゆっくり話すほうが伝わります。`); }
+    else if (rate > 400) { score -= 5;
+      tips.push(`話速がやや速め(${rate}字/分)です。大事な言葉の前で半拍おくと、聞き取りやすくなります。`); }
+    else if (rate < 200 && ratio > 1) {
+      tips.push("落ち着いた話し方ですが、その分だけ時間を使っています。内容を絞れば目標に収まります。"); }
+  }
+
+  score = Math.max(0, Math.min(100, score));
+  if (!tips.length) tips.push("時間・話速・言いよどみのバランスが取れています。この感覚を体で覚えるため、別の質問でも試してみましょう。");
+  const grade = score >= 90 ? "S" : score >= 80 ? "A" : score >= 70 ? "B" : score >= 60 ? "C" : "D";
+
+  return { mute:false, text, chars, rate, fillers, fpm, redundant, avgSent, spans, dur, target, ratio, score, grade, tips };
+}
+
+/* ---------- 録音 ---------- */
+function armSetup() {
+  $("pick").innerHTML = QUESTIONS.map((q) => `<option value="${q.id}">${esc(q.text)}</option>`).join("");
+  $("pick").addEventListener("change", (e) => { S.qid = e.target.value; setTarget(qOf(S.qid).t); });
+
+  $("targets").innerHTML = TARGETS.map((t) =>
+    `<button type="button" data-t="${t}" aria-pressed="false">${t}秒</button>`).join("");
+  $("targets").addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-t]"); if (b) setTarget(Number(b.dataset.t));
+  });
+  setTarget(S.target);
+
+  if (!SR) { $("no-sr").classList.remove("hide"); $("begin").disabled = true; }
+}
+function setTarget(t) {
+  S.target = t;
+  document.querySelectorAll("#targets button").forEach((b) =>
+    b.setAttribute("aria-pressed", String(Number(b.dataset.t) === t)));
+}
+
+function toRec() {
+  $("asked").textContent = qOf(S.qid).text;
+  $("goal").textContent = mmss(S.target);
+  resetRec();
+  show("rec");
+}
+function resetRec() {
+  $("clock").textContent = "0:00"; $("clock").classList.remove("past");
+  $("rail").style.width = "0%"; $("rail").classList.remove("past");
+  $("live").textContent = "";
+  $("rec").classList.remove("hide"); $("stop").classList.add("hide");
+}
+
+function start() {
+  if (!SR) return;
+  S.parts = []; S.interim = ""; S.on = true; S.t0 = Date.now();
+
+  const r = new SR();
+  r.lang = "ja-JP"; r.continuous = true; r.interimResults = true;
+  r.onresult = (ev) => {
+    let interim = "";
+    for (let i = ev.resultIndex; i < ev.results.length; i++) {
+      const res = ev.results[i];
+      if (res.isFinal) { const t = res[0].transcript.trim(); if (t) S.parts.push(t); }
+      else interim += res[0].transcript;
+    }
+    S.interim = interim;
+    const el = $("live");
+    el.textContent = S.parts.join(" ") + (interim ? " " + interim : "");
+    el.scrollTop = el.scrollHeight;
+  };
+  // Chrome は無音が続くと勝手に切れるので、録音中は繋ぎ直す
+  r.onend = () => { if (S.on) { try { r.start(); } catch (_) {} } };
+  r.onerror = (ev) => {
+    if (ev.error === "not-allowed" || ev.error === "service-not-allowed") {
+      S.on = false; clearInterval(S.tick);
+      $("mic-blocked").classList.remove("hide");
+      resetRec(); show("setup");
+    }
+  };
+  S.rec = r;
+  try { r.start(); } catch (_) {}
+
+  $("rec").classList.add("hide"); $("stop").classList.remove("hide");
+  S.tick = setInterval(() => {
+    const s = (Date.now() - S.t0) / 1000;
+    $("clock").textContent = mmss(s);
+    const past = s > S.target;
+    $("clock").classList.toggle("past", past);
+    $("rail").style.width = Math.min((s / S.target) * 100, 100) + "%";
+    $("rail").classList.toggle("past", past);
+  }, 200);
+}
+
+function stop() {
+  if (!S.on) return;
+  S.on = false;
+  clearInterval(S.tick);
+  const dur = (Date.now() - S.t0) / 1000;
+  if (S.rec) { try { S.rec.stop(); } catch (_) {} }
+  setTimeout(() => {
+    if (S.interim.trim()) { S.parts.push(S.interim.trim()); S.interim = ""; }
+    const r = analyze(S.parts, dur, S.target);
+    if (!r.mute) save(r);          // 認識できなかった回は記録に残さない
+    report(r);
+    show("report");
+  }, 600);
+}
+
+function quit() {
+  S.on = false; clearInterval(S.tick);
+  if (S.rec) { try { S.rec.stop(); } catch (_) {} }
+  resetRec(); show("setup");
+}
+
+/* ---------- 結果 ---------- */
+function report(r) {
+  $("score").textContent = r.mute ? "–" : r.score;
+  $("grade").textContent = r.mute ? "採点不可" : `評価 ${r.grade}`;
+
+  if (r.mute) {
+    $("verdict").innerHTML = "<b>音声を認識できませんでした。</b><br>この回は記録に残していません。";
+    $("readout").innerHTML = "";
+    $("tips").innerHTML = r.tips.map((t) => `<li>${esc(t)}</li>`).join("");
+    $("script").innerHTML = '<span style="color:var(--muted)">(認識された言葉がありません)</span>';
+    return;
+  }
+
+  const over = Math.round((r.ratio - 1) * 100);
+  $("verdict").innerHTML = r.ratio > 1.1
+    ? `目標 ${mmss(r.target)} に対して <b>${mmss(r.dur)}</b>。<br><b>${over}% 超過</b>しています。`
+    : r.ratio >= 0.7
+      ? `目標 ${mmss(r.target)} に対して <b>${mmss(r.dur)}</b>。<br>時間の使い方はほぼ狙いどおりです。`
+      : `目標 ${mmss(r.target)} に対して <b>${mmss(r.dur)}</b>。<br>やや短めでした。`;
+
+  const cell = (k, v, n, flag) =>
+    `<div class="cell"${flag ? ` data-flag="${flag}"` : ""}><div class="k">${k}</div><div class="v">${v}</div><div class="n">${n}</div></div>`;
+
+  $("readout").innerHTML = [
+    cell("時間", mmss(r.dur), `目標 ${mmss(r.target)}`,
+      r.ratio > 1.3 ? "over" : (r.ratio <= 1.1 && r.ratio >= 0.4 ? "good" : "")),
+    cell("話速", `${r.rate}<span style="font-size:13px;font-weight:400">字/分</span>`, "目安 250〜350",
+      r.rate > 450 ? "over" : (r.rate >= 250 && r.rate <= 350 ? "good" : "")),
+    cell("言いよどみ", `${r.fillers}<span style="font-size:13px;font-weight:400">回</span>`,
+      `1分あたり ${r.fpm.toFixed(1)} 回`, r.fpm > 3 ? "over" : (r.fpm <= 1.5 ? "good" : "")),
+    cell("冗長な表現", `${r.redundant}<span style="font-size:13px;font-weight:400">回</span>`, "「〜という形で」など",
+      r.redundant >= 4 ? "over" : (r.redundant === 0 ? "good" : "")),
+    cell("一文の長さ", `${r.avgSent}<span style="font-size:13px;font-weight:400">字</span>`, "目安 60字以内",
+      r.avgSent > 80 ? "over" : (r.avgSent > 0 && r.avgSent <= 60 ? "good" : "")),
+    cell("話した量", `${r.chars}<span style="font-size:13px;font-weight:400">字</span>`, "句読点を除く", ""),
+  ].join("");
+
+  $("tips").innerHTML = r.tips.map((t) => `<li>${esc(t)}</li>`).join("");
+
+  // カウントと同じ span からハイライトを組み立てるので、数字と色が必ず一致する
+  let html = "", pos = 0;
+  for (const s of r.spans) {
+    html += esc(r.text.slice(pos, s.start));
+    html += `<mark class="${s.cls}">${esc(r.text.slice(s.start, s.end))}</mark>`;
+    pos = s.end;
+  }
+  html += esc(r.text.slice(pos));
+  $("script").innerHTML = html || '<span style="color:var(--muted)">(認識された言葉がありません)</span>';
+}
+
+/* ---------- 記録 ---------- */
+function loadLog() { try { return JSON.parse(localStorage.getItem(KEY)) || []; } catch (_) { return []; } }
+function save(r) {
+  const log = loadLog();
+  log.push({ date: new Date().toISOString(), qid: S.qid, dur: Math.round(r.dur),
+             target: r.target, fillers: r.fillers, score: r.score });
+  try { localStorage.setItem(KEY, JSON.stringify(log)); } catch (_) {}
+}
+
+function drawLog() {
+  const log = loadLog();
+  const none = log.length === 0;
+  $("log-blank").classList.toggle("hide", !none);
+  $("log-body").classList.toggle("hide", none);
+  if (none) return;
+
+  plot(log.slice(-30));
+
+  $("log-rows").innerHTML = log.slice().reverse().map((h) => {
+    const d = new Date(h.date);
+    const when = `${d.getMonth()+1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2,"0")}`;
+    const q = qOf(h.qid).text;
+    const over = h.dur > h.target * 1.1;
+    return `<tr>
+      <td class="n">${when}</td>
+      <td>${esc(q.length > 12 ? q.slice(0,12) + "…" : q)}</td>
+      <td class="n${over ? " over" : ""}">${mmss(h.dur)}</td>
+      <td class="n">${mmss(h.target)}</td>
+      <td class="n">${h.fillers}</td>
+      <td class="n">${h.score}</td>
+    </tr>`;
+  }).join("");
+}
+
+/* 単一系列の折れ線。系列名はカードの見出しが兼ねるので凡例は置かない */
+function plot(data) {
+  const host = $("plot"), tip = $("tip");
+  const W = Math.max(host.clientWidth || 560, 300), H = 190;
+  const m = { t: 14, r: 18, b: 26, l: 32 };
+  const pw = W - m.l - m.r, ph = H - m.t - m.b, n = data.length;
+  const X = (i) => m.l + (n === 1 ? pw / 2 : (i / (n - 1)) * pw);
+  const Y = (s) => m.t + (1 - s / 100) * ph;
+
+  const cs = getComputedStyle(document.documentElement);
+  const c = (k) => cs.getPropertyValue(k).trim();
+  const accent = c("--accent"), rule = c("--rule"), muted = c("--muted"), surf = c("--surface");
+
+  let s = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="練習ごとのスコアの推移">`;
+  for (const v of [0, 50, 100]) {
+    s += `<line x1="${m.l}" y1="${Y(v)}" x2="${W-m.r}" y2="${Y(v)}" stroke="${rule}" stroke-width="1"/>`;
+    s += `<text x="${m.l-7}" y="${Y(v)+4}" text-anchor="end" font-size="10" fill="${muted}" style="font-variant-numeric:tabular-nums">${v}</text>`;
+  }
+  if (n > 1) {
+    s += `<polyline points="${data.map((d,i) => `${X(i)},${Y(d.score)}`).join(" ")}" fill="none" stroke="${accent}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+  }
+  data.forEach((d, i) => {
+    s += `<circle cx="${X(i)}" cy="${Y(d.score)}" r="4" fill="${accent}" stroke="${surf}" stroke-width="2"/>`;
+  });
+  const last = data[n-1];
+  s += `<text x="${Math.min(X(n-1), W-m.r-2)}" y="${Math.max(Y(last.score)-11, 12)}" text-anchor="middle" font-size="12" font-weight="700" fill="${accent}" style="font-variant-numeric:tabular-nums">${last.score}</text>`;
+  const dt = (iso) => { const d = new Date(iso); return `${d.getMonth()+1}/${d.getDate()}`; };
+  s += `<text x="${m.l}" y="${H-6}" font-size="10" fill="${muted}">${dt(data[0].date)}</text>`;
+  if (n > 1) s += `<text x="${W-m.r}" y="${H-6}" text-anchor="end" font-size="10" fill="${muted}">${dt(last.date)}</text>`;
+  data.forEach((d, i) => {
+    const hw = n === 1 ? pw : pw / (n - 1);
+    s += `<rect data-i="${i}" x="${Math.max(X(i)-hw/2, m.l)}" y="${m.t}" width="${hw}" height="${ph}" fill="transparent"/>`;
+  });
+  s += `</svg>`;
+  host.innerHTML = s;
+
+  const svg = host.querySelector("svg");
+  const place = (e) => {
+    const r = e.target.closest("rect[data-i]");
+    if (!r) { tip.classList.add("hide"); return; }
+    const d = data[Number(r.dataset.i)], dd = new Date(d.date);
+    tip.innerHTML = `<b style="font-variant-numeric:tabular-nums">${d.score}点</b> · ${mmss(d.dur)} / 目標 ${mmss(d.target)}<br>` +
+      `<span style="color:var(--muted)">${dd.getMonth()+1}/${dd.getDate()} ${esc(qOf(d.qid).text.slice(0,10))}…</span>`;
+    tip.classList.remove("hide");
+    const card = host.closest(".plotcard").getBoundingClientRect();
+    const px = X(Number(r.dataset.i)) + host.getBoundingClientRect().left - card.left;
+    tip.style.left = Math.min(Math.max(px - 70, 6), card.width - tip.offsetWidth - 6) + "px";
+    // 点の下に置く。下端に近い点だけ上に逃がす
+    const y = Y(data[Number(r.dataset.i)].score);
+    tip.style.top = (y > 120 ? y - tip.offsetHeight - 14 : y + 26) + "px";
+  };
+  svg.addEventListener("mousemove", place);
+  svg.addEventListener("click", place);
+  svg.addEventListener("mouseleave", () => tip.classList.add("hide"));
+}
+
+/* ---------- 起動 ---------- */
+function boot() {
+  armSetup();
+  document.querySelectorAll(".navlinks button").forEach((b) =>
+    b.addEventListener("click", () => show(b.dataset.view === "log" ? "log" : "setup")));
+  $("begin").addEventListener("click", toRec);
+  $("rec").addEventListener("click", start);
+  $("stop").addEventListener("click", stop);
+  $("back").addEventListener("click", quit);
+  $("again").addEventListener("click", toRec);
+  $("other").addEventListener("click", () => show("setup"));
+  $("wipe").addEventListener("click", () => {
+    if (confirm("練習の記録をすべて消します。よろしいですか?")) { localStorage.removeItem(KEY); drawLog(); }
+  });
+  let rz;
+  window.addEventListener("resize", () => {
+    clearTimeout(rz);
+    rz = setTimeout(() => { if ($("v-log").classList.contains("on")) drawLog(); }, 200);
+  });
+}
+if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
+else boot();
+</script>
 </body>
 </html>
