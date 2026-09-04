@@ -46,10 +46,26 @@ http://localhost:3000 を開く。
 | GET | `/api/tasks/:id/activities` | タスクの進捗履歴 |
 | GET | `/api/stats?projectId=` | 部員別の担当数・完了数（`projectId` 省略時は全プロジェクト集計） |
 | GET / POST | `/api/members` | 部員一覧 / 追加 |
+| POST | `/api/kyotei/plan` | 競艇: 出走表 + オッズ + 資金 → 買い目プラン（[詳細](docs/kyotei.md)） |
 | DELETE | `/api/members/:id` | 部員削除（担当タスクは未割当に戻る） |
 
 フィールドは snake_case（`assignee_id`, `due_date`, `project_id`）。`status` はタスクが `todo` / `doing` / `done`、プロジェクトが `active` / `archived`。
 更新系エンドポイントは body に任意で `actor_id` / `actor_name` を渡すと、進捗履歴（activities）に記録されます。
+
+## 競艇 期待値ツール（`/kyotei`）
+
+タスクボードとは独立した付属ツール。詳細は **[docs/kyotei.md](docs/kyotei.md)**。
+
+舟券は控除率が約25%あるため、「買えば高確率で利益が出る」ツールは原理的に作れません。
+このツールは当てるためのものではなく、**オッズが自分の見積もりより甘い買い目だけを買い、
+それ以外を全部見送る**ための判断・資金配分・検証を機械化するものです。多くのレースは「見送り」になります。
+
+- 出走表 → 着順確率（コース別成績 + Plackett–Luce / Henery）、過去レースからの重み較正
+- オッズから控除率と市場の含意確率を復元し、期待値がしきい値を超える買い目だけ抽出
+- 複数買い目への同時ケリー配分で購入金額を決定（100円単位）
+- バックテスト（回収率・最大DD・t値）とモンテカルロ（利益確率・破産確率）で、そのルールが本当に勝てるのかを検証
+
+ロジックは `src/lib/kyotei/` の純関数で、UI・DB に依存しません。
 
 ## 開発
 
